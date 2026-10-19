@@ -1,6 +1,7 @@
+
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import axios from "axios";
 import {
@@ -15,435 +16,357 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 
 import Sidebar from "@/component/layout/Sidebar";
 import Navbar from "@/component/layout/Navbar";
 import api from "@/lib/api";
 
-/* =========================================================
-   INTERFACE BARANG
-========================================================= */
-
 interface Barang {
   id: number;
   kode_barang: string;
   nama_barang: string;
   detail_ukuran: string | null;
-
   satuan_masuk: string;
   isi_per_satuan: number | null;
   satuan_keluar: string;
-
   stok_minimum: number;
 }
-
-/* =========================================================
-   INTERFACE BARANG MASUK
-========================================================= */
 
 interface BarangMasuk {
   id: number;
   tanggal: string;
   nomor_transaksi: string;
-
   barang_id: number;
-
   kode_barang: string;
   nama_barang: string;
   detail_ukuran: string | null;
-
   jumlah: number;
   satuan: string;
   jumlah_dasar: number;
-
   satuan_keluar?: string;
   isi_per_satuan?: number | null;
-
   supplier: string | null;
   keterangan: string | null;
 }
 
-/* =========================================================
-   FORM DATA
-========================================================= */
+type UserRole = "admin" | "pimpinan" | "gudang";
 
 interface FormData {
   tanggal: string;
   kode_barang: string;
   nama_barang: string;
   detail_ukuran: string;
-
   satuan_masuk: string;
   isi_per_satuan: string;
   satuan_keluar: string;
-
   stok_minimum: string;
-
   jumlah: string;
-
   supplier: string;
   keterangan: string;
 }
 
-/* =========================================================
-   INITIAL FORM
-========================================================= */
+const inputClass =
+  "w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:cursor-not-allowed disabled:bg-slate-100";
 
-const initialForm: FormData = {
-  tanggal: new Date().toISOString().split("T")[0],
+const today = () => {
+  const date = new Date();
 
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+};
+
+const createInitialForm = (): FormData => ({
+  tanggal: today(),
   kode_barang: "",
   nama_barang: "",
   detail_ukuran: "",
-
   satuan_masuk: "",
   isi_per_satuan: "",
   satuan_keluar: "PCS",
-
   stok_minimum: "0",
-
   jumlah: "",
-
   supplier: "",
   keterangan: "",
-};
+});
 
-/* =========================================================
-   PAGE
-========================================================= */
+function normalizeArray<T>(value: unknown): T[] {
+  if (Array.isArray(value)) return value as T[];
+
+  if (value && typeof value === "object") {
+    const object = value as Record<string, unknown>;
+
+    if (Array.isArray(object.data)) {
+      return object.data as T[];
+    }
+
+    if (
+      object.data &&
+      typeof object.data === "object" &&
+      Array.isArray((object.data as Record<string, unknown>).data)
+    ) {
+      return (object.data as { data: T[] }).data;
+    }
+  }
+
+  return [];
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (axios.isAxiosError(error)) {
+    const responseData = error.response?.data as
+      | {
+          message?: string;
+          error?: string;
+          errors?: Record<string, string[]>;
+        }
+      | undefined;
+
+    if (responseData?.errors) {
+      const firstError = Object.values(responseData.errors).flat()[0];
+      if (firstError) return firstError;
+    }
+
+    return responseData?.message || responseData?.error || fallback;
+  }
+
+  return fallback;
+}
+
+function formatKodeBarang(kode?: string | null) {
+  if (!kode) return "-";
+
+  const value = kode.trim().toUpperCase();
+  const match = value.match(/^(?:BRG-?)?(\d+)$/);
+
+  if (!match) return value;
+
+  return `BRG-${match[1].padStart(4, "0")}`;
+}
+
+function formatNumber(value: number | string | null | undefined) {
+  return Number(value ?? 0).toLocaleString("id-ID");
+}
+
+function DetailItem({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-xl bg-slate-50 p-4">
+      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
+        {label}
+      </p>
+      <p className="break-words text-sm font-medium text-slate-800">
+        {value || "-"}
+      </p>
+    </div>
+  );
+}
+
+function FormField({
+  label,
+  required,
+  children,
+}: {
+  label: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label className="mb-2 block text-sm font-medium text-slate-700">
+        {label}
+        {required && <span className="ml-1 text-red-500">*</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
 
 export default function BarangMasukPage() {
   const [data, setData] = useState<BarangMasuk[]>([]);
   const [dataBarang, setDataBarang] = useState<Barang[]>([]);
 
+  const [currentUserRole, setCurrentUserRole] = useState<UserRole | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
   const [search, setSearch] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [showModal, setShowModal] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
-
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [selectedData, setSelectedData] = useState<BarangMasuk | null>(null);
 
-  const [selectedData, setSelectedData] =
-    useState<BarangMasuk | null>(null);
-
-  const [form, setForm] = useState<FormData>(initialForm);
-
-  const [barangDitemukan, setBarangDitemukan] =
-    useState<Barang | null>(null);
-
+  const [form, setForm] = useState<FormData>(createInitialForm());
+  const [barangDitemukan, setBarangDitemukan] = useState<Barang | null>(null);
   const [barangBaru, setBarangBaru] = useState(false);
 
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
-  const [currentPage, setCurrentPage] = useState(1);
-
   const itemsPerPage = 10;
 
-  /* =========================================================
-     NORMALIZE RESPONSE
-  ========================================================= */
+  // Hanya admin dan gudang yang boleh mengelola transaksi.
+  const canManageBarangMasuk =
+    currentUserRole === "admin" || currentUserRole === "gudang";
 
-  const normalizeArray = <T,>(responseData: unknown): T[] => {
-    if (Array.isArray(responseData)) {
-      return responseData as T[];
-    }
-
-    if (
-      responseData &&
-      typeof responseData === "object" &&
-      "data" in responseData
-    ) {
-      const nestedData = (responseData as { data?: unknown }).data;
-
-      if (Array.isArray(nestedData)) {
-        return nestedData as T[];
-      }
-    }
-
-    return [];
-  };
-
-  /* =========================================================
-     FETCH DATA
-  ========================================================= */
-
-  const fetchData = async () => {
+  // Baca role dari user yang tersimpan setelah halaman dimuat.
+  useEffect(() => {
     try {
-      const [masukResponse, barangResponse] =
-        await Promise.all([
-          api.get("/barang-masuk"),
-          api.get("/barang"),
-        ]);
+      const storedUser = localStorage.getItem("user");
 
-      const masukData = normalizeArray<BarangMasuk>(
-        masukResponse.data
-      );
-
-      const barangData = normalizeArray<Barang>(
-        barangResponse.data
-      );
-
-      setData(masukData);
-      setDataBarang(barangData);
-    } catch (err: unknown) {
-      console.error(err);
-
-      if (axios.isAxiosError(err)) {
-        setError(
-          err.response?.data?.message ||
-            err.response?.data?.error ||
-            "Gagal mengambil data barang masuk."
-        );
-      } else {
-        setError(
-          "Gagal mengambil data barang masuk."
-        );
+      if (!storedUser) {
+        setCurrentUserRole(null);
+        return;
       }
+
+      const user = JSON.parse(storedUser);
+      const role = String(user.role ?? "").trim().toLowerCase();
+
+      if (role === "admin" || role === "pimpinan" || role === "gudang") {
+        setCurrentUserRole(role);
+      } else {
+        setCurrentUserRole(null);
+      }
+    } catch (err) {
+      console.error("Gagal membaca role pengguna:", err);
+      setCurrentUserRole(null);
     }
-  };
+  }, []);
 
-  /* =========================================================
-     INITIAL LOAD
+  const fetchData = useCallback(async () => {
+    const [masukResponse, barangResponse] = await Promise.all([
+      api.get("/barang-masuk"),
+      api.get("/barang"),
+    ]);
 
-     Tidak ada setCurrentPage di dalam effect.
-  ========================================================= */
+    setData(normalizeArray<BarangMasuk>(masukResponse.data));
+    setDataBarang(normalizeArray<Barang>(barangResponse.data));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
-    const loadData = async () => {
+    const load = async () => {
+      setLoading(true);
+      setError("");
+
       try {
-        const [masukResponse, barangResponse] =
-          await Promise.all([
-            api.get("/barang-masuk"),
-            api.get("/barang"),
-          ]);
+        const [masukResponse, barangResponse] = await Promise.all([
+          api.get("/barang-masuk"),
+          api.get("/barang"),
+        ]);
 
         if (cancelled) return;
 
-        const masukData =
-          normalizeArray<BarangMasuk>(
-            masukResponse.data
-          );
-
-        const barangData =
-          normalizeArray<Barang>(
-            barangResponse.data
-          );
-
-        setData(masukData);
-        setDataBarang(barangData);
+        setData(normalizeArray<BarangMasuk>(masukResponse.data));
+        setDataBarang(normalizeArray<Barang>(barangResponse.data));
       } catch (err: unknown) {
-        if (cancelled) return;
-
-        console.error(err);
-
-        if (axios.isAxiosError(err)) {
+        if (!cancelled) {
           setError(
-            err.response?.data?.message ||
-              err.response?.data?.error ||
-              "Gagal mengambil data barang masuk."
-          );
-        } else {
-          setError(
-            "Gagal mengambil data barang masuk."
+            getErrorMessage(err, "Gagal mengambil data barang masuk.")
           );
         }
       } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+        if (!cancelled) setLoading(false);
       }
     };
 
-    loadData();
+    void load();
 
     return () => {
       cancelled = true;
     };
   }, []);
 
-  /* =========================================================
-     RESET FORM
-  ========================================================= */
-
   const resetForm = () => {
-    setForm({
-      ...initialForm,
-      tanggal: new Date()
-        .toISOString()
-        .split("T")[0],
-    });
-
+    setForm(createInitialForm());
     setEditingId(null);
     setBarangDitemukan(null);
     setBarangBaru(false);
     setError("");
   };
 
-  /* =========================================================
-     GENERATE KODE BARANG BERIKUTNYA
-  ========================================================= */
-
   const getNextKodeBarang = () => {
-    const daftarBarang = Array.isArray(dataBarang)
-      ? dataBarang
-      : [];
-
     let maxNumber = 0;
 
-    daftarBarang.forEach((item) => {
-      const kode = String(
-        item?.kode_barang ?? ""
-      )
-        .trim()
-        .toUpperCase();
-
-      const match = kode.match(/^BRG-(\d+)$/);
+    dataBarang.forEach((barang) => {
+      const kode = String(barang.kode_barang ?? "").trim().toUpperCase();
+      const match = kode.match(/^(?:BRG-?)?(\d+)$/);
 
       if (match) {
-        const number = Number(match[1]);
-
-        if (Number.isFinite(number)) {
-          maxNumber = Math.max(
-            maxNumber,
-            number
-          );
-        }
+        maxNumber = Math.max(maxNumber, Number(match[1]));
       }
     });
 
-    return `BRG-${String(
-      maxNumber + 1
-    ).padStart(4, "0")}`;
+    return `BRG-${String(maxNumber + 1).padStart(4, "0")}`;
   };
-
-  /* =========================================================
-     FORMAT KODE BARANG
-  ========================================================= */
-
-  const formatKodeBarang = (
-    kode: string | null | undefined
-  ) => {
-    if (!kode) return "-";
-
-    const value = String(kode).trim();
-
-    const match = value.match(/(\d+)$/);
-
-    if (!match) {
-      return value.toUpperCase();
-    }
-
-    return `BRG-${match[1].padStart(4, "0")}`;
-  };
-
-  /* =========================================================
-     FORMAT KONVERSI
-  ========================================================= */
 
   const formatKonversi = (
-    barang: Barang | null
+    barang: Pick<
+      Barang,
+      "satuan_masuk" | "satuan_keluar" | "isi_per_satuan"
+    > | null
   ) => {
-    if (!barang) return "";
+    if (!barang) return "-";
 
-    const satuanMasuk =
-      barang.satuan_masuk?.trim();
-
-    const satuanKeluar =
-      barang.satuan_keluar?.trim();
-
-    const isi = barang.isi_per_satuan;
+    const masuk = barang.satuan_masuk?.trim();
+    const keluar = barang.satuan_keluar?.trim();
+    const isi = Number(barang.isi_per_satuan);
 
     if (
-      satuanMasuk &&
-      satuanKeluar &&
-      satuanMasuk.toUpperCase() !==
-        satuanKeluar.toUpperCase() &&
-      isi
+      masuk &&
+      keluar &&
+      masuk.toUpperCase() !== keluar.toUpperCase() &&
+      isi > 0
     ) {
-      return `1 ${satuanMasuk} = ${Number(
-        isi
-      ).toLocaleString("id-ID")} ${satuanKeluar}`;
+      return `1 ${masuk} = ${formatNumber(isi)} ${keluar}`;
     }
 
-    return `Satuan stok: ${
-      satuanKeluar || satuanMasuk || "-"
-    }`;
+    return `Satuan stok: ${keluar || masuk || "-"}`;
   };
 
-  /* =========================================================
-     OPEN ADD
-  ========================================================= */
-
   const handleAdd = () => {
-    const nextKode = getNextKodeBarang();
+    if (!canManageBarangMasuk) return;
+
+    resetForm();
 
     setForm({
-      ...initialForm,
-      tanggal: new Date()
-        .toISOString()
-        .split("T")[0],
-      kode_barang: nextKode,
+      ...createInitialForm(),
+      kode_barang: getNextKodeBarang(),
     });
 
-    setEditingId(null);
-    setBarangDitemukan(null);
     setBarangBaru(true);
-
-    setError("");
     setSuccess("");
-
     setShowModal(true);
   };
 
-  /* =========================================================
-     CEK KODE BARANG
-  ========================================================= */
+  const handleKodeBarangChange = (value: string) => {
+    if (!canManageBarangMasuk) return;
 
-  const handleKodeBarangChange = (
-    value: string
-  ) => {
     const kode = value.trim();
 
-    const daftarBarang: Barang[] =
-      Array.isArray(dataBarang)
-        ? dataBarang
-        : [];
-
-    const barang = daftarBarang.find(
-      (item) => {
-        if (
-          !item ||
-          !item.kode_barang
-        ) {
-          return false;
-        }
-
-        return (
-          String(item.kode_barang)
-            .trim()
-            .toLowerCase() ===
-          kode.toLowerCase()
-        );
-      }
-    );
-
-    /* =====================================================
-       KODE KOSONG
-    ===================================================== */
+    setForm((previous) => ({
+      ...previous,
+      kode_barang: value,
+    }));
 
     if (!kode) {
       setBarangDitemukan(null);
       setBarangBaru(false);
 
-      setForm((prev) => ({
-        ...prev,
+      setForm((previous) => ({
+        ...previous,
         kode_barang: value,
         nama_barang: "",
         detail_ukuran: "",
@@ -456,103 +379,74 @@ export default function BarangMasukPage() {
       return;
     }
 
-    /* =====================================================
-       BARANG SUDAH ADA
-    ===================================================== */
+    const barang = dataBarang.find(
+      (item) =>
+        item.kode_barang?.trim().toLowerCase() === kode.toLowerCase() ||
+        formatKodeBarang(item.kode_barang).toLowerCase() ===
+          formatKodeBarang(kode).toLowerCase()
+    );
 
     if (barang) {
       setBarangDitemukan(barang);
       setBarangBaru(false);
 
-      setForm((prev) => ({
-        ...prev,
+      setForm((previous) => ({
+        ...previous,
         kode_barang: value,
-
-        nama_barang:
-          barang.nama_barang || "",
-
-        detail_ukuran:
-          barang.detail_ukuran || "",
-
-        satuan_masuk:
-          barang.satuan_masuk || "",
-
+        nama_barang: barang.nama_barang || "",
+        detail_ukuran: barang.detail_ukuran || "",
+        satuan_masuk: barang.satuan_masuk || "",
         isi_per_satuan:
-          barang.isi_per_satuan !== null &&
-          barang.isi_per_satuan !== undefined
-            ? String(
-                barang.isi_per_satuan
-              )
-            : "",
-
-        satuan_keluar:
-          barang.satuan_keluar || "PCS",
-
-        stok_minimum:
-          String(
-            barang.stok_minimum ?? 0
-          ),
+          barang.isi_per_satuan == null
+            ? ""
+            : String(barang.isi_per_satuan),
+        satuan_keluar: barang.satuan_keluar || "PCS",
+        stok_minimum: String(barang.stok_minimum ?? 0),
       }));
+    } else {
+      setBarangDitemukan(null);
+      setBarangBaru(true);
 
-      return;
+      setForm((previous) => ({
+        ...previous,
+        kode_barang: value,
+        nama_barang: "",
+        detail_ukuran: "",
+        satuan_masuk: "",
+        isi_per_satuan: "",
+        satuan_keluar: "PCS",
+        stok_minimum: "0",
+      }));
     }
-
-    /* =====================================================
-       BARANG BARU
-    ===================================================== */
-
-    setBarangDitemukan(null);
-    setBarangBaru(true);
-
-    setForm((prev) => ({
-      ...prev,
-      kode_barang: value,
-
-      nama_barang: "",
-      detail_ukuran: "",
-
-      satuan_masuk: "",
-      isi_per_satuan: "",
-      satuan_keluar: "PCS",
-
-      stok_minimum: "0",
-    }));
   };
 
-  /* =========================================================
-     INPUT FORM
-  ========================================================= */
-
   const handleChange = (
-    e: ChangeEvent<
-      HTMLInputElement |
-        HTMLTextAreaElement |
-        HTMLSelectElement
+    event: ChangeEvent<
+      HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
     >
   ) => {
-    const { name, value } = e.target;
+    if (!canManageBarangMasuk) return;
 
-    setForm((prev) => ({
-      ...prev,
+    const { name, value } = event.target;
+
+    setForm((previous) => ({
+      ...previous,
       [name]: value,
     }));
   };
 
-  /* =========================================================
-     SAVE
-  ========================================================= */
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
 
-  const handleSubmit = async (
-    e: FormEvent<HTMLFormElement>
-  ) => {
-    e.preventDefault();
+    // Pengaman tambahan untuk role pimpinan.
+    if (!canManageBarangMasuk) {
+      setShowModal(false);
+      setError("Anda tidak memiliki izin untuk mengubah barang masuk.");
+      return;
+    }
 
     setError("");
     setSuccess("");
-
-    /* =====================================================
-       VALIDASI
-    ===================================================== */
 
     if (!form.tanggal) {
       setError("Tanggal wajib diisi.");
@@ -579,384 +473,173 @@ export default function BarangMasukPage() {
       return;
     }
 
-    /* =====================================================
-       KONVERSI WAJIB JIKA BUKAN PCS
-    ===================================================== */
+    const satuanMasuk = form.satuan_masuk.trim().toUpperCase();
+    const satuanKeluar = form.satuan_keluar.trim().toUpperCase();
+    const isi = Number(form.isi_per_satuan);
+    const jumlah = Number(form.jumlah);
+    const stokMinimum = Number(form.stok_minimum || 0);
 
-    if (
-      form.satuan_masuk
-        .trim()
-        .toUpperCase() !== "PCS"
-    ) {
-      if (
-        !form.isi_per_satuan ||
-        Number(form.isi_per_satuan) <= 0
-      ) {
-        setError(
-          `Isi per satuan wajib diisi untuk satuan ${form.satuan_masuk}.`
-        );
-        return;
-      }
-    }
-
-    if (
-      !form.jumlah ||
-      Number(form.jumlah) <= 0
-    ) {
+    if (satuanMasuk !== satuanKeluar && (!isi || isi <= 0)) {
       setError(
-        "Jumlah barang harus lebih dari 0."
+        "Isi per satuan wajib diisi jika satuan masuk berbeda dari satuan stok."
       );
       return;
     }
 
+    if (!Number.isFinite(jumlah) || jumlah <= 0) {
+      setError("Jumlah barang harus lebih dari 0.");
+      return;
+    }
+
+    if (!Number.isFinite(stokMinimum) || stokMinimum < 0) {
+      setError("Batas minimum stok tidak boleh negatif.");
+      return;
+    }
+
+    const payload = {
+      tanggal: form.tanggal,
+      kode_barang: form.kode_barang.trim(),
+      nama_barang: form.nama_barang.trim(),
+      detail_ukuran: form.detail_ukuran.trim() || null,
+      satuan_masuk: form.satuan_masuk.trim(),
+      isi_per_satuan: satuanMasuk === satuanKeluar ? null : isi,
+      satuan_keluar: form.satuan_keluar.trim(),
+      stok_minimum: stokMinimum,
+      jumlah,
+      supplier: form.supplier.trim() || null,
+      keterangan: form.keterangan.trim() || null,
+    };
+
     try {
       setSaving(true);
 
-      const payload = {
-        tanggal: form.tanggal,
-
-        kode_barang:
-          form.kode_barang.trim(),
-
-        nama_barang:
-          form.nama_barang.trim(),
-
-        detail_ukuran:
-          form.detail_ukuran.trim() ||
-          null,
-
-        satuan_masuk:
-          form.satuan_masuk.trim(),
-
-        isi_per_satuan:
-          form.satuan_masuk
-            .trim()
-            .toUpperCase() === "PCS"
-            ? null
-            : Number(
-                form.isi_per_satuan
-              ),
-
-        satuan_keluar:
-          form.satuan_keluar.trim(),
-
-        stok_minimum:
-          Number(
-            form.stok_minimum || 0
-          ),
-
-        jumlah:
-          Number(form.jumlah),
-
-        supplier:
-          form.supplier.trim() || null,
-
-        keterangan:
-          form.keterangan.trim() || null,
-      };
-
-      /* ===================================================
-         EDIT
-      =================================================== */
-
       if (editingId !== null) {
-        await api.put(
-          `/barang-masuk/${editingId}`,
-          payload
-        );
-
-        setSuccess(
-          "Barang masuk berhasil diperbarui."
-        );
-      }
-
-      /* ===================================================
-         TAMBAH
-      =================================================== */
-
-      else {
-        await api.post(
-          "/barang-masuk",
-          payload
-        );
-
-        setSuccess(
-          "Barang masuk berhasil ditambahkan."
-        );
+        await api.put(`/barang-masuk/${editingId}`, payload);
+        setSuccess("Barang masuk berhasil diperbarui.");
+      } else {
+        await api.post("/barang-masuk", payload);
+        setSuccess("Barang masuk berhasil ditambahkan.");
       }
 
       setShowModal(false);
-
       resetForm();
 
-      await fetchData();
-
-      setTimeout(() => {
-        setSuccess("");
-      }, 3000);
-    } catch (err: unknown) {
-      console.error(err);
-
-      if (axios.isAxiosError(err)) {
+      try {
+        await fetchData();
+      } catch (refreshError: unknown) {
         setError(
-          err.response?.data?.message ||
-            err.response?.data?.error ||
-            "Terjadi kesalahan saat menyimpan data."
-        );
-      } else {
-        setError(
-          "Terjadi kesalahan saat menyimpan data."
+          getErrorMessage(
+            refreshError,
+            "Transaksi tersimpan, tetapi data terbaru gagal dimuat. Silakan muat ulang halaman."
+          )
         );
       }
+    } catch (err: unknown) {
+      setError(
+        getErrorMessage(err, "Gagal menyimpan data barang masuk.")
+      );
     } finally {
       setSaving(false);
     }
   };
 
-  /* =========================================================
-     EDIT
-  ========================================================= */
+  const handleEdit = (item: BarangMasuk) => {
+    if (!canManageBarangMasuk) return;
 
-  const handleEdit = (
-    item: BarangMasuk
-  ) => {
-    const daftarBarang: Barang[] =
-      Array.isArray(dataBarang)
-        ? dataBarang
-        : [];
-
-    const barang = daftarBarang.find(
-      (b) => b.id === item.barang_id
-    );
+    const barang = dataBarang.find((entry) => entry.id === item.barang_id);
 
     setEditingId(item.id);
+    setBarangDitemukan(barang || null);
+    setBarangBaru(!barang);
 
     setForm({
-      tanggal: item.tanggal,
-
-      kode_barang:
-        item.kode_barang,
-
-      nama_barang:
-        item.nama_barang,
-
-      detail_ukuran:
-        item.detail_ukuran || "",
-
-      satuan_masuk:
-        barang?.satuan_masuk ||
-        item.satuan ||
-        "",
-
+      tanggal: item.tanggal?.slice(0, 10) || today(),
+      kode_barang: item.kode_barang || "",
+      nama_barang: item.nama_barang || "",
+      detail_ukuran: item.detail_ukuran || "",
+      satuan_masuk: barang?.satuan_masuk || item.satuan || "",
       isi_per_satuan:
-        barang?.isi_per_satuan !== null &&
-        barang?.isi_per_satuan !== undefined
-          ? String(
-              barang.isi_per_satuan
-            )
-          : "",
-
+        barang?.isi_per_satuan != null
+          ? String(barang.isi_per_satuan)
+          : item.isi_per_satuan != null
+            ? String(item.isi_per_satuan)
+            : "",
       satuan_keluar:
-        barang?.satuan_keluar ||
-        item.satuan_keluar ||
-        "PCS",
-
-      stok_minimum:
-        barang
-          ? String(
-              barang.stok_minimum ?? 0
-            )
-          : "0",
-
-      jumlah:
-        String(item.jumlah),
-
-      supplier:
-        item.supplier || "",
-
-      keterangan:
-        item.keterangan || "",
+        barang?.satuan_keluar || item.satuan_keluar || "PCS",
+      stok_minimum: String(barang?.stok_minimum ?? 0),
+      jumlah: String(item.jumlah ?? ""),
+      supplier: item.supplier || "",
+      keterangan: item.keterangan || "",
     });
 
-    setBarangDitemukan(
-      barang || null
+    setError("");
+    setSuccess("");
+    setShowModal(true);
+  };
+
+  const handleDelete = async (item: BarangMasuk) => {
+    if (!canManageBarangMasuk) {
+      setError("Anda tidak memiliki izin untuk menghapus barang masuk.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Yakin ingin menghapus transaksi ${item.nomor_transaksi}?`
     );
 
-    setBarangBaru(!barang);
+    if (!confirmed) return;
 
     setError("");
     setSuccess("");
 
-    setShowModal(true);
-  };
-
-  /* =========================================================
-     DETAIL
-  ========================================================= */
-
-  const handleDetail = (
-    item: BarangMasuk
-  ) => {
-    setSelectedData(item);
-    setShowDetail(true);
-  };
-
-  /* =========================================================
-     DELETE
-  ========================================================= */
-
-  const handleDelete = async (
-    item: BarangMasuk
-  ) => {
-    const confirmDelete =
-      window.confirm(
-        `Yakin ingin menghapus transaksi ${item.nomor_transaksi}?`
-      );
-
-    if (!confirmDelete) return;
-
     try {
-      setError("");
-
-      await api.delete(
-        `/barang-masuk/${item.id}`
-      );
-
-      setSuccess(
-        "Transaksi barang masuk berhasil dihapus."
-      );
-
+      await api.delete(`/barang-masuk/${item.id}`);
+      setSuccess("Transaksi barang masuk berhasil dihapus.");
       await fetchData();
-
-      setTimeout(() => {
-        setSuccess("");
-      }, 3000);
     } catch (err: unknown) {
-      console.error(err);
-
-      if (axios.isAxiosError(err)) {
-        setError(
-          err.response?.data?.message ||
-            err.response?.data?.error ||
-            "Gagal menghapus transaksi."
-        );
-      } else {
-        setError(
-          "Gagal menghapus transaksi."
-        );
-      }
-
-      setTimeout(() => {
-        setError("");
-      }, 3000);
+      setError(getErrorMessage(err, "Gagal menghapus transaksi."));
     }
   };
-
-  /* =========================================================
-     FILTER SEARCH
-
-     useMemo hanya untuk menghitung data.
-     Tidak ada setState di sini.
-  ========================================================= */
 
   const filteredData = useMemo(() => {
-    const keyword =
-      search.toLowerCase().trim();
+    const keyword = search.toLowerCase().trim();
 
-    if (!keyword) {
-      return data;
-    }
+    if (!keyword) return data;
 
-    return data.filter((item) => {
-      return (
-        item.nomor_transaksi
-          ?.toLowerCase()
-          .includes(keyword) ||
-        item.kode_barang
-          ?.toLowerCase()
-          .includes(keyword) ||
-        item.nama_barang
-          ?.toLowerCase()
-          .includes(keyword) ||
-        item.supplier
-          ?.toLowerCase()
-          .includes(keyword) ||
-        item.keterangan
-          ?.toLowerCase()
-          .includes(keyword)
-      );
-    });
+    return data.filter((item) =>
+      [
+        item.nomor_transaksi,
+        item.kode_barang,
+        item.nama_barang,
+        item.supplier,
+        item.keterangan,
+      ].some((value) => String(value ?? "").toLowerCase().includes(keyword))
+    );
   }, [data, search]);
 
-  /* =========================================================
-     SUMMARY
-  ========================================================= */
+  const totalTransaksi = data.length;
 
-  const totalTransaksi =
-    data.length;
+  const totalBarangMasuk = data.reduce(
+    (total, item) =>
+      total + Number(item.jumlah_dasar ?? item.jumlah ?? 0),
+    0
+  );
 
-  /*
-   * Total barang masuk menggunakan jumlah_dasar.
-   * Jadi Pack/Dus/Box tetap dikonversi ke satuan stok.
-   */
-  const totalBarangMasuk =
-    data.reduce(
-      (total, item) =>
-        total +
-        Number(
-          item.jumlah_dasar ??
-            item.jumlah ??
-            0
-        ),
-      0
-    );
-
-  const supplierCount =
-    new Set(
-      data
-        .map(
-          (item) => item.supplier
-        )
-        .filter(Boolean)
-    ).size;
-
-  /* =========================================================
-     PAGINATION
-  ========================================================= */
+  const supplierCount = new Set(
+    data.map((item) => item.supplier?.trim()).filter(Boolean)
+  ).size;
 
   const totalPages = Math.max(
     1,
-    Math.ceil(
-      filteredData.length /
-        itemsPerPage
-    )
+    Math.ceil(filteredData.length / itemsPerPage)
   );
 
-  /*
-   * Jika search mengurangi jumlah halaman,
-   * halaman aktif tetap aman ketika data ditampilkan.
-   *
-   * Tidak menggunakan useEffect.
-   */
-  const safeCurrentPage =
-    Math.min(
-      currentPage,
-      totalPages
-    );
-
-  const startIndex =
-    (safeCurrentPage - 1) *
-    itemsPerPage;
-
-  const paginatedData =
-    filteredData.slice(
-      startIndex,
-      startIndex + itemsPerPage
-    );
-
-  /* =========================================================
-     RENDER
-  ========================================================= */
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+  const paginatedData = filteredData.slice(
+    startIndex,
+    startIndex + itemsPerPage
+  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -967,134 +650,133 @@ export default function BarangMasukPage() {
 
         <main className="pt-20">
           <div className="p-8">
-
-            {/* HEADER */}
-
-            <div className="mb-8 flex items-center justify-between">
-              <div>
-                <div className="mb-2 flex items-center gap-3">
-                  <div className="rounded-xl bg-blue-100 p-3">
-                    <PackagePlus className="h-7 w-7 text-blue-600" />
-                  </div>
-
-                  <div>
-                    <h1 className="text-2xl font-bold text-slate-800">
-                      Barang Masuk
-                    </h1>
-
-                    <p className="text-sm text-slate-500">
-                      Kelola transaksi barang
-                      yang masuk ke dalam stok
-                    </p>
-                  </div>
+            <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-blue-100 p-3">
+                  <PackagePlus className="h-7 w-7 text-blue-600" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-800">
+                    Barang Masuk
+                  </h1>
+                  <p className="text-sm text-slate-500">
+                    Kelola transaksi barang yang masuk ke dalam stok.
+                  </p>
                 </div>
               </div>
 
-              <button
-                onClick={handleAdd}
-                className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
-              >
-                <Plus className="h-5 w-5" />
-                Tambah Barang Masuk
-              </button>
+              {/* Tombol tambah hanya untuk admin dan gudang */}
+              {canManageBarangMasuk && (
+                <button
+                  type="button"
+                  onClick={handleAdd}
+                  className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                >
+                  <Plus className="h-5 w-5" />
+                  Tambah Barang Masuk
+                </button>
+              )}
             </div>
 
-            {/* SUCCESS */}
-
             {success && (
-              <div className="mb-6 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-sm text-green-700">
-                <CheckCircle2 className="h-5 w-5" />
-                {success}
+              <div className="mb-5 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-sm text-green-700">
+                <CheckCircle2 className="h-5 w-5 shrink-0" />
+                <span>{success}</span>
+                <button
+                  type="button"
+                  className="ml-auto"
+                  onClick={() => setSuccess("")}
+                  aria-label="Tutup pesan sukses"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
             )}
-
-            {/* ERROR */}
 
             {error && !showModal && (
-              <div className="mb-6 flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-                <AlertCircle className="h-5 w-5" />
-                {error}
+              <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+                <span>{error}</span>
+                <button
+                  type="button"
+                  className="ml-auto"
+                  onClick={() => setError("")}
+                  aria-label="Tutup pesan error"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
             )}
 
-            {/* SUMMARY */}
-
-            <div className="mb-8 grid grid-cols-3 gap-5">
+            <div className="mb-8 grid grid-cols-1 gap-5 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm text-slate-500">
-                  Total Transaksi
-                </p>
-
+                <p className="text-sm text-slate-500">Total Transaksi</p>
                 <h2 className="mt-2 text-3xl font-bold text-slate-800">
-                  {totalTransaksi}
+                  {formatNumber(totalTransaksi)}
                 </h2>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm text-slate-500">
-                  Total Barang Masuk
-                </p>
-
+                <p className="text-sm text-slate-500">Total Barang Masuk</p>
                 <h2 className="mt-2 text-3xl font-bold text-blue-600">
-                  {totalBarangMasuk.toLocaleString(
-                    "id-ID"
-                  )}
+                  {formatNumber(totalBarangMasuk)}
                 </h2>
-
                 <p className="mt-1 text-xs text-slate-400">
                   Dalam satuan stok
                 </p>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm text-slate-500">
-                  Supplier
-                </p>
-
+                <p className="text-sm text-slate-500">Supplier</p>
                 <h2 className="mt-2 text-3xl font-bold text-slate-800">
-                  {supplierCount}
+                  {formatNumber(supplierCount)}
                 </h2>
               </div>
             </div>
 
-            {/* TABLE */}
-
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-
-              {/* SEARCH */}
-
-              <div className="border-b border-slate-200 p-5">
-                <div className="relative max-w-md">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-5">
+                <div className="relative w-full max-w-md">
                   <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
-
                   <input
                     type="text"
                     placeholder="Cari kode, nama barang, transaksi..."
                     value={search}
-                    onChange={(e) => {
-                      setSearch(
-                        e.target.value
-                      );
-
-                      /*
-                       * Reset pagination langsung
-                       * ketika user mengetik.
-                       *
-                       * Ini bukan useEffect,
-                       * sehingga tidak terkena error
-                       * cascading renders.
-                       */
+                    onChange={(event) => {
+                      setSearch(event.target.value);
                       setCurrentPage(1);
                     }}
-                    className="w-full rounded-xl border border-slate-300 bg-white py-3 pl-10 pr-4 text-sm text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className="w-full rounded-xl border border-slate-300 py-3 pl-10 pr-4 text-sm text-slate-800 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                   />
                 </div>
+
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setLoading(true);
+                    setError("");
+
+                    try {
+                      await fetchData();
+                    } catch (err: unknown) {
+                      setError(
+                        getErrorMessage(err, "Gagal memuat ulang data.")
+                      );
+                    } finally {
+                      setLoading(false);
+                    }
+                  }}
+                  disabled={loading}
+                  className="flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                  />
+                  Muat Ulang
+                </button>
               </div>
 
-              {/* TABLE */}
-
               <div className="overflow-x-auto">
-
                 {loading ? (
                   <div className="flex items-center justify-center py-20">
                     <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
@@ -1102,384 +784,251 @@ export default function BarangMasukPage() {
                 ) : filteredData.length === 0 ? (
                   <div className="py-20 text-center">
                     <PackagePlus className="mx-auto mb-4 h-12 w-12 text-slate-300" />
-
                     <h3 className="text-lg font-semibold text-slate-700">
-                      Belum ada transaksi
-                      barang masuk
+                      {search
+                        ? "Data tidak ditemukan"
+                        : "Belum ada transaksi barang masuk"}
                     </h3>
-
                     <p className="mt-1 text-sm text-slate-500">
-                      Klik tombol Tambah Barang
-                      Masuk untuk menambahkan
-                      transaksi.
+                      {search
+                        ? "Coba gunakan kata kunci pencarian lain."
+                        : "Belum ada data transaksi barang masuk."}
                     </p>
                   </div>
                 ) : (
                   <table className="w-full min-w-[1250px] text-left text-sm">
                     <thead className="bg-slate-50 text-xs uppercase text-slate-500">
                       <tr>
-                        <th className="px-5 py-4">
-                          No
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Tanggal
-                        </th>
-
-                        <th className="px-5 py-4">
-                          No. Transaksi
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Kode Barang
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Nama Barang
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Detail / Ukuran
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Jumlah
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Satuan
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Konversi
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Supplier
-                        </th>
-
-                        <th className="px-5 py-4">
-                          Keterangan
-                        </th>
-
-                        <th className="px-5 py-4 text-center">
-                          Aksi
-                        </th>
+                        {[
+                          "No",
+                          "Tanggal",
+                          "No. Transaksi",
+                          "Kode Barang",
+                          "Nama Barang",
+                          "Detail / Ukuran",
+                          "Jumlah",
+                          "Satuan",
+                          "Konversi",
+                          "Supplier",
+                          "Keterangan",
+                          "Aksi",
+                        ].map((heading) => (
+                          <th
+                            key={heading}
+                            className={`px-5 py-4 ${
+                              heading === "Aksi" ? "text-center" : ""
+                            }`}
+                          >
+                            {heading}
+                          </th>
+                        ))}
                       </tr>
                     </thead>
 
                     <tbody className="divide-y divide-slate-100">
-                      {paginatedData.map(
-                        (
-                          item,
-                          index
-                        ) => {
-                          const barang =
-                            dataBarang.find(
-                              (b) =>
-                                b.id ===
-                                item.barang_id
-                            );
+                      {paginatedData.map((item, index) => {
+                        const barang = dataBarang.find(
+                          (entry) => entry.id === item.barang_id
+                        );
 
-                          return (
-                            <tr
-                              key={item.id}
-                              className="transition hover:bg-slate-50"
-                            >
-                              <td className="px-5 py-4 text-slate-600">
-                                {startIndex +
-                                  index +
-                                  1}
-                              </td>
+                        const konversiBarang = barang
+                          ? {
+                              satuan_masuk: barang.satuan_masuk,
+                              satuan_keluar: barang.satuan_keluar,
+                              isi_per_satuan: barang.isi_per_satuan,
+                            }
+                          : item.satuan_keluar
+                            ? {
+                                satuan_masuk: item.satuan,
+                                satuan_keluar: item.satuan_keluar,
+                                isi_per_satuan: item.isi_per_satuan ?? null,
+                              }
+                            : null;
 
-                              <td className="px-5 py-4">
-                                <div className="flex items-center gap-2 text-slate-700">
-                                  <CalendarDays className="h-4 w-4 text-slate-400" />
+                        return (
+                          <tr
+                            key={item.id}
+                            className="transition hover:bg-slate-50"
+                          >
+                            <td className="px-5 py-4 text-slate-600">
+                              {startIndex + index + 1}
+                            </td>
 
-                                  {item.tanggal}
-                                </div>
-                              </td>
+                            <td className="px-5 py-4">
+                              <div className="flex items-center gap-2 text-slate-700">
+                                <CalendarDays className="h-4 w-4 text-slate-400" />
+                                {item.tanggal?.slice(0, 10) || "-"}
+                              </div>
+                            </td>
 
-                              <td className="px-5 py-4">
-                                <span className="font-semibold text-blue-600">
-                                  {
-                                    item.nomor_transaksi
-                                  }
-                                </span>
-                              </td>
+                            <td className="px-5 py-4 font-semibold text-blue-600">
+                              {item.nomor_transaksi || "-"}
+                            </td>
 
-                              <td className="px-5 py-4">
-                                <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-medium text-slate-700">
-                                  {formatKodeBarang(
-                                    item.kode_barang
-                                  )}
-                                </span>
-                              </td>
+                            <td className="px-5 py-4">
+                              <span className="rounded-lg bg-slate-100 px-2.5 py-1 font-medium text-slate-700">
+                                {formatKodeBarang(item.kode_barang)}
+                              </span>
+                            </td>
 
-                              <td className="px-5 py-4 font-medium text-slate-800">
-                                {
-                                  item.nama_barang
-                                }
-                              </td>
+                            <td className="px-5 py-4 font-medium text-slate-800">
+                              {item.nama_barang}
+                            </td>
 
-                              <td className="px-5 py-4 text-slate-600">
-                                {
-                                  item.detail_ukuran ||
-                                  "-"
-                                }
-                              </td>
+                            <td className="px-5 py-4 text-slate-600">
+                              {item.detail_ukuran || "-"}
+                            </td>
 
-                              <td className="px-5 py-4 font-semibold text-slate-800">
-                                {Number(
-                                  item.jumlah
-                                ).toLocaleString(
-                                  "id-ID"
+                            <td className="px-5 py-4 font-semibold text-slate-800">
+                              {formatNumber(item.jumlah)}
+                            </td>
+
+                            <td className="px-5 py-4 text-slate-600">
+                              {item.satuan || "-"}
+                            </td>
+
+                            <td className="px-5 py-4 text-slate-600">
+                              {formatKonversi(konversiBarang)}
+                            </td>
+
+                            <td className="px-5 py-4 text-slate-600">
+                              {item.supplier || "-"}
+                            </td>
+
+                            <td className="max-w-[200px] px-5 py-4 text-slate-600">
+                              <span className="line-clamp-2">
+                                {item.keterangan || "-"}
+                              </span>
+                            </td>
+
+                            <td className="px-5 py-4">
+                              <div className="flex items-center justify-center gap-1">
+                                {/* Semua role boleh melihat detail */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedData(item);
+                                    setShowDetail(true);
+                                  }}
+                                  title="Lihat detail"
+                                  className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </button>
+
+                                {/* Edit dan hapus hanya untuk admin/gudang */}
+                                {canManageBarangMasuk && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEdit(item)}
+                                      title="Edit"
+                                      className="rounded-lg p-2 text-blue-500 hover:bg-blue-50 hover:text-blue-700"
+                                    >
+                                      <Pencil className="h-4 w-4" />
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleDelete(item)}
+                                      title="Hapus"
+                                      className="rounded-lg p-2 text-red-500 hover:bg-red-50 hover:text-red-700"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </>
                                 )}
-                              </td>
-
-                              <td className="px-5 py-4 text-slate-600">
-                                {item.satuan}
-                              </td>
-
-                              <td className="px-5 py-4 text-slate-600">
-                                {formatKonversi(
-                                  barang ||
-                                    (item.satuan_keluar
-                                      ? {
-                                          id: item.barang_id,
-                                          kode_barang:
-                                            item.kode_barang,
-                                          nama_barang:
-                                            item.nama_barang,
-                                          detail_ukuran:
-                                            item.detail_ukuran,
-                                          satuan_masuk:
-                                            item.satuan,
-                                          isi_per_satuan:
-                                            item.isi_per_satuan ??
-                                            null,
-                                          satuan_keluar:
-                                            item.satuan_keluar,
-                                          stok_minimum: 0,
-                                        }
-                                      : null)
-                                )}
-                              </td>
-
-                              <td className="px-5 py-4 text-slate-600">
-                                {item.supplier ||
-                                  "-"}
-                              </td>
-
-                              <td className="max-w-[200px] px-5 py-4 text-slate-600">
-                                <span className="line-clamp-2">
-                                  {item.keterangan ||
-                                    "-"}
-                                </span>
-                              </td>
-
-                              <td className="px-5 py-4">
-                                <div className="flex items-center justify-center gap-2">
-
-                                  {/* DETAIL */}
-
-                                  <button
-                                    onClick={() =>
-                                      handleDetail(
-                                        item
-                                      )
-                                    }
-                                    title="Lihat detail"
-                                    className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800"
-                                  >
-                                    <Eye className="h-4 w-4" />
-                                  </button>
-
-                                  {/* EDIT */}
-
-                                  <button
-                                    onClick={() =>
-                                      handleEdit(
-                                        item
-                                      )
-                                    }
-                                    title="Edit"
-                                    className="rounded-lg p-2 text-blue-500 transition hover:bg-blue-50 hover:text-blue-700"
-                                  >
-                                    <Pencil className="h-4 w-4" />
-                                  </button>
-
-                                  {/* DELETE */}
-
-                                  <button
-                                    onClick={() =>
-                                      handleDelete(
-                                        item
-                                      )
-                                    }
-                                    title="Hapus"
-                                    className="rounded-lg p-2 text-red-500 transition hover:bg-red-50 hover:text-red-700"
-                                  >
-                                    <Trash2 className="h-4 w-4" />
-                                  </button>
-
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        }
-                      )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
-
-                {/* PAGINATION */}
-
-                {!loading &&
-                  filteredData.length >
-                    0 && (
-                    <div className="flex items-center justify-between border-t border-slate-200 px-5 py-4">
-
-                      <div className="text-sm text-slate-500">
-                        Menampilkan{" "}
-                        <span className="font-semibold text-slate-700">
-                          {startIndex + 1}
-                        </span>
-
-                        {" - "}
-
-                        <span className="font-semibold text-slate-700">
-                          {Math.min(
-                            startIndex +
-                              itemsPerPage,
-                            filteredData.length
-                          )}
-                        </span>
-
-                        {" dari "}
-
-                        <span className="font-semibold text-slate-700">
-                          {
-                            filteredData.length
-                          }
-                        </span>
-
-                        {" data"}
-                      </div>
-
-                      <div className="flex items-center gap-2">
-
-                        {/* SEBELUMNYA */}
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCurrentPage(
-                              (prev) =>
-                                Math.max(
-                                  prev - 1,
-                                  1
-                                )
-                            )
-                          }
-                          disabled={
-                            safeCurrentPage ===
-                            1
-                          }
-                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Sebelumnya
-                        </button>
-
-                        {/* NOMOR HALAMAN */}
-
-                        <div className="flex items-center gap-1">
-                          {Array.from(
-                            {
-                              length:
-                                totalPages,
-                            },
-                            (
-                              _,
-                              index
-                            ) =>
-                              index + 1
-                          ).map(
-                            (page) => (
-                              <button
-                                key={page}
-                                type="button"
-                                onClick={() =>
-                                  setCurrentPage(
-                                    page
-                                  )
-                                }
-                                className={`h-9 min-w-9 rounded-lg px-3 text-sm font-medium transition ${
-                                  safeCurrentPage ===
-                                  page
-                                    ? "bg-blue-600 text-white"
-                                    : "border border-slate-300 text-slate-600 hover:bg-slate-50"
-                                }`}
-                              >
-                                {page}
-                              </button>
-                            )
-                          )}
-                        </div>
-
-                        {/* BERIKUTNYA */}
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCurrentPage(
-                              (prev) =>
-                                Math.min(
-                                  prev + 1,
-                                  totalPages
-                                )
-                            )
-                          }
-                          disabled={
-                            safeCurrentPage ===
-                            totalPages
-                          }
-                          className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Berikutnya
-                        </button>
-
-                      </div>
-                    </div>
-                  )}
               </div>
+
+              {!loading && filteredData.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 px-5 py-4">
+                  <p className="text-sm text-slate-500">
+                    Menampilkan{" "}
+                    <span className="font-semibold text-slate-700">
+                      {startIndex + 1}–
+                      {Math.min(
+                        startIndex + itemsPerPage,
+                        filteredData.length
+                      )}
+                    </span>{" "}
+                    dari{" "}
+                    <span className="font-semibold text-slate-700">
+                      {filteredData.length}
+                    </span>{" "}
+                    data
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage((page) => Math.max(1, page - 1))
+                      }
+                      disabled={safeCurrentPage === 1}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Sebelumnya
+                    </button>
+
+                    {Array.from(
+                      { length: totalPages },
+                      (_, index) => index + 1
+                    ).map((page) => (
+                      <button
+                        key={page}
+                        type="button"
+                        onClick={() => setCurrentPage(page)}
+                        className={`h-9 min-w-9 rounded-lg px-3 text-sm font-medium ${
+                          safeCurrentPage === page
+                            ? "bg-blue-600 text-white"
+                            : "border border-slate-300 text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {page}
+                      </button>
+                    ))}
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setCurrentPage((page) =>
+                          Math.min(totalPages, page + 1)
+                        )
+                      }
+                      disabled={safeCurrentPage === totalPages}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Berikutnya
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </main>
       </div>
 
-      {/* =====================================================
-          MODAL TAMBAH / EDIT
-      ===================================================== */}
-
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
-
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
-
-            {/* HEADER */}
-
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+      {/* MODAL TAMBAH / EDIT */}
+      {showModal && canManageBarangMasuk && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-6">
+          <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-5">
               <div>
                 <h2 className="text-xl font-bold text-slate-800">
                   {editingId !== null
                     ? "Edit Barang Masuk"
                     : "Tambah Barang Masuk"}
                 </h2>
-
                 <p className="mt-1 text-sm text-slate-500">
-                  Masukkan data transaksi
-                  barang masuk
+                  Masukkan informasi transaksi barang masuk.
                 </p>
               </div>
 
@@ -1489,451 +1038,243 @@ export default function BarangMasukPage() {
                   setShowModal(false);
                   resetForm();
                 }}
-                className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Tutup modal"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            {/* FORM */}
-
             <form onSubmit={handleSubmit}>
-              <div className="space-y-6 p-6">
-
-                {/* ERROR */}
-
+              <div className="space-y-5 p-6">
                 {error && (
-                  <div className="flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    <AlertCircle className="h-5 w-5 shrink-0" />
-                    {error}
+                  <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+                    <span>{error}</span>
                   </div>
                 )}
 
-                {/* TANGGAL */}
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                  <FormField label="Tanggal" required>
+                    <input
+                      type="date"
+                      name="tanggal"
+                      value={form.tanggal}
+                      onChange={handleChange}
+                      required
+                      className={inputClass}
+                    />
+                  </FormField>
 
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Tanggal
-                  </label>
-
-                  <input
-                    type="date"
-                    name="tanggal"
-                    value={form.tanggal}
-                    onChange={
-                      handleChange
-                    }
-                    required
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-                  />
+                  <FormField label="Nomor Transaksi">
+                    <input
+                      value={
+                        editingId !== null
+                          ? data.find((item) => item.id === editingId)
+                              ?.nomor_transaksi || "-"
+                          : "Otomatis dibuat oleh sistem"
+                      }
+                      disabled
+                      className={`${inputClass} cursor-not-allowed bg-slate-100`}
+                    />
+                  </FormField>
                 </div>
 
-                {/* NOMOR TRANSAKSI */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Nomor Transaksi
-                  </label>
-
+                <FormField label="Kode Barang" required>
                   <input
-                    type="text"
-                    value={
-                      editingId !== null
-                        ? data.find(
-                            (item) =>
-                              item.id ===
-                              editingId
-                          )
-                            ?.nomor_transaksi ||
-                          "-"
-                        : "Otomatis dibuat oleh sistem"
-                    }
-                    disabled
-                    className="w-full cursor-not-allowed rounded-xl border border-slate-200 bg-slate-100 px-4 py-3 text-sm text-slate-500"
-                  />
-                </div>
-
-                {/* KODE BARANG */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Kode Barang
-                    <span className="ml-1 text-red-500">
-                      *
-                    </span>
-                  </label>
-
-                  <input
-                    type="text"
                     name="kode_barang"
-                    value={
-                      form.kode_barang
-                    }
-                    onChange={(e) =>
-                      handleKodeBarangChange(
-                        e.target.value
-                      )
+                    value={form.kode_barang}
+                    onChange={(event) =>
+                      handleKodeBarangChange(event.target.value)
                     }
                     placeholder="Contoh: BRG-0001"
                     required
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium uppercase text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className={`${inputClass} uppercase`}
                   />
 
                   {barangDitemukan && (
-                    <div className="mt-2 flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
+                    <p className="mt-2 flex items-center gap-2 text-sm text-green-700">
                       <CheckCircle2 className="h-4 w-4" />
-
-                      Barang sudah terdaftar.
-                      Data barang otomatis
-                      digunakan.
-                    </div>
+                      Barang sudah terdaftar. Data barang digunakan secara
+                      otomatis.
+                    </p>
                   )}
 
-                  {barangBaru &&
-                    form.kode_barang.trim() && (
-                      <div className="mt-2 flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">
-                        <PackagePlus className="h-4 w-4" />
+                  {barangBaru && form.kode_barang.trim() && (
+                    <p className="mt-2 flex items-center gap-2 text-sm text-blue-700">
+                      <PackagePlus className="h-4 w-4" />
+                      Kode belum terdaftar. Data barang baru akan dibuat jika
+                      didukung backend.
+                    </p>
+                  )}
+                </FormField>
 
-                        Kode barang belum
-                        terdaftar. Data barang
-                        baru akan dibuat.
-                      </div>
-                    )}
-                </div>
-
-                {/* NAMA BARANG */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Nama Barang
-                    <span className="ml-1 text-red-500">
-                      *
-                    </span>
-                  </label>
-
+                <FormField label="Nama Barang" required>
                   <input
-                    type="text"
                     name="nama_barang"
-                    value={
-                      form.nama_barang
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    disabled={
-                      !!barangDitemukan
-                    }
-                    placeholder="Nama barang"
+                    value={form.nama_barang}
+                    onChange={handleChange}
+                    disabled={!!barangDitemukan}
+                    placeholder="Masukkan nama barang"
                     required
-                    className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${
-                      barangDitemukan
-                        ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500"
-                        : "border-slate-300"
-                    }`}
+                    className={inputClass}
                   />
-                </div>
+                </FormField>
 
-                {/* SATUAN MASUK + ISI */}
-
-                <div className="grid grid-cols-2 gap-5">
-
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">
-                      Satuan Masuk
-                      <span className="ml-1 text-red-500">
-                        *
-                      </span>
-                    </label>
-
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                  <FormField label="Satuan Masuk" required>
                     <input
-                      type="text"
                       name="satuan_masuk"
-                      value={
-                        form.satuan_masuk
-                      }
-                      onChange={
-                        handleChange
-                      }
-                      disabled={
-                        !!barangDitemukan
-                      }
+                      value={form.satuan_masuk}
+                      onChange={handleChange}
+                      disabled={!!barangDitemukan}
                       placeholder="PCS / PACK / BOX"
                       required
-                      className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${
-                        barangDitemukan
-                          ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500"
-                          : "border-slate-300"
-                      }`}
+                      className={inputClass}
                     />
-                  </div>
+                  </FormField>
 
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">
-                      Isi per Satuan
-                    </label>
-
+                  <FormField label="Isi per Satuan">
                     <input
                       type="number"
                       name="isi_per_satuan"
-                      value={
-                        form.isi_per_satuan
-                      }
-                      onChange={
-                        handleChange
-                      }
+                      value={form.isi_per_satuan}
+                      onChange={handleChange}
                       disabled={
                         !!barangDitemukan ||
-                        form.satuan_masuk
-                          .trim()
-                          .toUpperCase() ===
-                          "PCS"
+                        form.satuan_masuk.trim().toUpperCase() === "PCS"
                       }
                       min="1"
+                      step="1"
                       placeholder="Contoh: 25"
-                      className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${
-                        barangDitemukan ||
-                        form.satuan_masuk
-                          .trim()
-                          .toUpperCase() ===
-                          "PCS"
-                          ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500"
-                          : "border-slate-300"
-                      }`}
+                      className={inputClass}
                     />
-
                     <p className="mt-1 text-xs text-slate-400">
-                      Contoh: 1 Pack = 25 PCS
+                      Contoh: 1 PACK = 25 PCS.
                     </p>
-                  </div>
+                  </FormField>
                 </div>
 
-                {/* SATUAN STOK */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Satuan Stok
-                    <span className="ml-1 text-red-500">
-                      *
-                    </span>
-                  </label>
-
+                <FormField label="Satuan Stok" required>
                   <input
-                    type="text"
                     name="satuan_keluar"
-                    value={
-                      form.satuan_keluar
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    disabled={
-                      !!barangDitemukan
-                    }
-                    placeholder="PCS"
+                    value={form.satuan_keluar}
+                    onChange={handleChange}
+                    disabled={!!barangDitemukan}
+                    placeholder="Contoh: PCS"
                     required
-                    className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${
-                      barangDitemukan
-                        ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500"
-                        : "border-slate-300"
-                    }`}
+                    className={inputClass}
                   />
-                </div>
-
-                {/* INFO KONVERSI */}
+                </FormField>
 
                 {barangDitemukan && (
                   <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
                     <p className="text-xs font-medium uppercase tracking-wide text-blue-500">
                       Konversi Stok
                     </p>
-
                     <p className="mt-1 text-sm font-semibold text-blue-700">
-                      {formatKonversi(
-                        barangDitemukan
-                      )}
+                      {formatKonversi(barangDitemukan)}
                     </p>
                   </div>
                 )}
 
-                {/* DETAIL / UKURAN */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Detail / Ukuran
-                  </label>
-
+                <FormField label="Detail / Ukuran">
                   <input
-                    type="text"
                     name="detail_ukuran"
-                    value={
-                      form.detail_ukuran
-                    }
-                    onChange={
-                      handleChange
-                    }
-                    disabled={
-                      !!barangDitemukan
-                    }
+                    value={form.detail_ukuran}
+                    onChange={handleChange}
+                    disabled={!!barangDitemukan}
                     placeholder="Contoh: Ukuran L / 10 Meter"
-                    className={`w-full rounded-xl border bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 ${
-                      barangDitemukan
-                        ? "cursor-not-allowed border-slate-200 bg-slate-100 text-slate-500"
-                        : "border-slate-300"
-                    }`}
+                    className={inputClass}
                   />
-                </div>
-
-                {/* STOK MINIMUM */}
+                </FormField>
 
                 {barangBaru && (
-                  <div>
-                    <label className="mb-2 block text-sm font-medium text-slate-700">
-                      Batas Minimum Stok
-                    </label>
-
+                  <FormField label="Batas Minimum Stok">
                     <input
                       type="number"
                       name="stok_minimum"
-                      value={
-                        form.stok_minimum
-                      }
-                      onChange={
-                        handleChange
-                      }
+                      value={form.stok_minimum}
+                      onChange={handleChange}
                       min="0"
-                      placeholder="Contoh: 10"
-                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      step="1"
+                      className={inputClass}
                     />
-
                     <p className="mt-1 text-xs text-slate-400">
-                      Digunakan untuk menentukan
-                      status stok Menipis.
+                      Digunakan untuk menentukan status stok menipis.
                     </p>
-                  </div>
+                  </FormField>
                 )}
 
-                {/* JUMLAH */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Jumlah Barang Masuk
-                    <span className="ml-1 text-red-500">
-                      *
-                    </span>
-                  </label>
-
+                <FormField label="Jumlah Barang Masuk" required>
                   <input
                     type="number"
                     name="jumlah"
-                    value={
-                      form.jumlah
-                    }
-                    onChange={
-                      handleChange
-                    }
+                    value={form.jumlah}
+                    onChange={handleChange}
                     min="1"
-                    placeholder={`Masukkan jumlah ${form.satuan_masuk || "barang"}`}
+                    step="1"
+                    placeholder={`Jumlah dalam ${
+                      form.satuan_masuk || "satuan masuk"
+                    }`}
                     required
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className={inputClass}
                   />
 
-                  {form.jumlah &&
-                    form.satuan_masuk && (
-                      <p className="mt-2 text-xs text-slate-500">
-                        Jumlah masuk:{" "}
-                        <span className="font-semibold text-slate-700">
-                          {Number(
-                            form.jumlah
-                          ).toLocaleString(
-                            "id-ID"
-                          )}{" "}
-                          {
-                            form.satuan_masuk
-                          }
-                        </span>
+                  {form.jumlah && form.satuan_masuk && (
+                    <p className="mt-2 text-xs text-slate-500">
+                      Jumlah masuk:{" "}
+                      <strong>
+                        {formatNumber(form.jumlah)} {form.satuan_masuk}
+                      </strong>
+                      {form.satuan_masuk.trim().toUpperCase() !==
+                        form.satuan_keluar.trim().toUpperCase() &&
+                        Number(form.isi_per_satuan) > 0 && (
+                          <>
+                            {" → "}
+                            <strong className="text-blue-600">
+                              {formatNumber(
+                                Number(form.jumlah) *
+                                  Number(form.isi_per_satuan)
+                              )}{" "}
+                              {form.satuan_keluar}
+                            </strong>
+                          </>
+                        )}
+                    </p>
+                  )}
+                </FormField>
 
-                        {form.satuan_masuk
-                          .trim()
-                          .toUpperCase() !==
-                          "PCS" &&
-                          form.isi_per_satuan && (
-                            <>
-                              {" → "}
-                              <span className="font-semibold text-blue-600">
-                                {(
-                                  Number(
-                                    form.jumlah
-                                  ) *
-                                  Number(
-                                    form.isi_per_satuan
-                                  )
-                                ).toLocaleString(
-                                  "id-ID"
-                                )}{" "}
-                                {
-                                  form.satuan_keluar
-                                }
-                              </span>
-                            </>
-                          )}
-                      </p>
-                    )}
-                </div>
-
-                {/* SUPPLIER */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Supplier
-                  </label>
-
+                <FormField label="Supplier">
                   <input
-                    type="text"
                     name="supplier"
-                    value={
-                      form.supplier
-                    }
-                    onChange={
-                      handleChange
-                    }
+                    value={form.supplier}
+                    onChange={handleChange}
                     placeholder="Nama supplier"
-                    className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className={inputClass}
                   />
-                </div>
+                </FormField>
 
-                {/* KETERANGAN */}
-
-                <div>
-                  <label className="mb-2 block text-sm font-medium text-slate-700">
-                    Keterangan
-                  </label>
-
+                <FormField label="Keterangan">
                   <textarea
                     name="keterangan"
-                    value={
-                      form.keterangan
-                    }
-                    onChange={
-                      handleChange
-                    }
+                    value={form.keterangan}
+                    onChange={handleChange}
                     rows={3}
                     placeholder="Keterangan tambahan..."
-                    className="w-full resize-none rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-800 placeholder:text-slate-400 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                    className={`${inputClass} resize-y`}
                   />
-                </div>
+                </FormField>
               </div>
 
-              {/* FOOTER */}
-
               <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-5">
-
                 <button
                   type="button"
                   onClick={() => {
                     setShowModal(false);
                     resetForm();
                   }}
-                  className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  className="rounded-xl border border-slate-300 px-5 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
                 >
                   Batal
                 </button>
@@ -1941,17 +1282,16 @@ export default function BarangMasukPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="flex items-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {saving && (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   )}
-
                   {saving
                     ? "Menyimpan..."
                     : editingId !== null
-                    ? "Simpan Perubahan"
-                    : "Simpan Barang Masuk"}
+                      ? "Simpan Perubahan"
+                      : "Simpan Barang Masuk"}
                 </button>
               </div>
             </form>
@@ -1959,178 +1299,96 @@ export default function BarangMasukPage() {
         </div>
       )}
 
-      {/* =====================================================
-          MODAL DETAIL
-      ===================================================== */}
-
-      {showDetail &&
-        selectedData && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-6">
-
-            <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl">
-
-              {/* HEADER */}
-
-              <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-
-                <div>
-                  <h2 className="text-xl font-bold text-slate-800">
-                    Detail Barang Masuk
-                  </h2>
-
-                  <p className="mt-1 text-sm text-slate-500">
-                    {
-                      selectedData.nomor_transaksi
-                    }
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setShowDetail(false)
-                  }
-                  className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                >
-                  <X className="h-5 w-5" />
-                </button>
+      {/* MODAL DETAIL: bisa dibuka oleh semua role */}
+      {showDetail && selectedData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-6">
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800">
+                  Detail Barang Masuk
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {selectedData.nomor_transaksi || "-"}
+                </p>
               </div>
 
-              {/* DETAIL CONTENT */}
+              <button
+                type="button"
+                onClick={() => setShowDetail(false)}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Tutup detail"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
 
-              <div className="grid grid-cols-2 gap-5 p-6">
+            <div className="grid grid-cols-1 gap-4 p-6 sm:grid-cols-2">
+              <DetailItem
+                label="Tanggal"
+                value={selectedData.tanggal?.slice(0, 10) || "-"}
+              />
+              <DetailItem
+                label="Nomor Transaksi"
+                value={selectedData.nomor_transaksi || "-"}
+              />
+              <DetailItem
+                label="Kode Barang"
+                value={formatKodeBarang(selectedData.kode_barang)}
+              />
+              <DetailItem
+                label="Nama Barang"
+                value={selectedData.nama_barang || "-"}
+              />
+              <DetailItem
+                label="Detail / Ukuran"
+                value={selectedData.detail_ukuran || "-"}
+              />
+              <DetailItem
+                label="Jumlah Masuk"
+                value={`${formatNumber(selectedData.jumlah)} ${
+                  selectedData.satuan || ""
+                }`}
+              />
+              <DetailItem
+                label="Jumlah dalam Stok"
+                value={`${formatNumber(
+                  selectedData.jumlah_dasar ?? selectedData.jumlah
+                )} ${selectedData.satuan_keluar || "PCS"}`}
+              />
+              <DetailItem
+                label="Konversi"
+                value={
+                  selectedData.satuan_keluar &&
+                  Number(selectedData.isi_per_satuan) > 0
+                    ? `1 ${selectedData.satuan} = ${formatNumber(
+                        selectedData.isi_per_satuan
+                      )} ${selectedData.satuan_keluar}`
+                    : selectedData.satuan || "-"
+                }
+              />
+              <DetailItem
+                label="Supplier"
+                value={selectedData.supplier || "-"}
+              />
+              <DetailItem
+                label="Keterangan"
+                value={selectedData.keterangan || "-"}
+              />
+            </div>
 
-                <DetailItem
-                  label="Tanggal"
-                  value={
-                    selectedData.tanggal
-                  }
-                />
-
-                <DetailItem
-                  label="Nomor Transaksi"
-                  value={
-                    selectedData.nomor_transaksi
-                  }
-                />
-
-                <DetailItem
-                  label="Kode Barang"
-                  value={formatKodeBarang(
-                    selectedData.kode_barang
-                  )}
-                />
-
-                <DetailItem
-                  label="Nama Barang"
-                  value={
-                    selectedData.nama_barang
-                  }
-                />
-
-                <DetailItem
-                  label="Detail / Ukuran"
-                  value={
-                    selectedData.detail_ukuran ||
-                    "-"
-                  }
-                />
-
-                <DetailItem
-                  label="Jumlah Masuk"
-                  value={`${Number(
-                    selectedData.jumlah
-                  ).toLocaleString(
-                    "id-ID"
-                  )} ${
-                    selectedData.satuan
-                  }`}
-                />
-
-                <DetailItem
-                  label="Jumlah Stok"
-                  value={`${Number(
-                    selectedData.jumlah_dasar ??
-                      selectedData.jumlah
-                  ).toLocaleString(
-                    "id-ID"
-                  )} ${
-                    selectedData.satuan_keluar ||
-                    "PCS"
-                  }`}
-                />
-
-                <DetailItem
-                  label="Konversi"
-                  value={
-                    selectedData.satuan_keluar &&
-                    selectedData.isi_per_satuan
-                      ? `1 ${selectedData.satuan} = ${Number(
-                          selectedData.isi_per_satuan
-                        ).toLocaleString(
-                          "id-ID"
-                        )} ${selectedData.satuan_keluar}`
-                      : selectedData.satuan
-                  }
-                />
-
-                <DetailItem
-                  label="Supplier"
-                  value={
-                    selectedData.supplier ||
-                    "-"
-                  }
-                />
-
-                <DetailItem
-                  label="Keterangan"
-                  value={
-                    selectedData.keterangan ||
-                    "-"
-                  }
-                />
-              </div>
-
-              {/* FOOTER */}
-
-              <div className="flex justify-end border-t border-slate-200 px-6 py-5">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setShowDetail(false)
-                  }
-                  className="rounded-xl bg-slate-800 px-5 py-3 text-sm font-medium text-white hover:bg-slate-900"
-                >
-                  Tutup
-                </button>
-              </div>
+            <div className="flex justify-end border-t border-slate-200 px-6 py-5">
+              <button
+                type="button"
+                onClick={() => setShowDetail(false)}
+                className="rounded-xl bg-slate-800 px-5 py-3 text-sm font-medium text-white hover:bg-slate-900"
+              >
+                Tutup
+              </button>
             </div>
           </div>
-        )}
-    </div>
-  );
-}
-
-/* =========================================================
-   DETAIL ITEM
-========================================================= */
-
-function DetailItem({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="rounded-xl bg-slate-50 p-4">
-      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-slate-400">
-        {label}
-      </p>
-
-      <p className="text-sm font-medium text-slate-800">
-        {value}
-      </p>
+        </div>
+      )}
     </div>
   );
 }
