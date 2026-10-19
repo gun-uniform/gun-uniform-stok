@@ -97,13 +97,6 @@ export default function Sidebar() {
 
       {/* Bottom */}
       <div className="absolute bottom-0 left-0 w-full border-t border-slate-200 p-4">
-        <Link
-          href="/pengaturan"
-          className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-        >
-          <Settings className="h-5 w-5" />
-          Pengaturan
-        </Link>
 
         <button
           type="button"
