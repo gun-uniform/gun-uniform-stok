@@ -82,7 +82,7 @@ export default function LoginPage() {
             data?.errors ?? {}
           )[0]?.[0];
 
-          if (status === 401 || status === 422) {
+          if (status === 401 || status === 422) { } else if (err.request) {
             setError(
               validationMessage ||
               data?.message ||
@@ -93,11 +93,23 @@ export default function LoginPage() {
               `Login gagal (HTTP ${status}). Silakan coba kembali.`
             );
           }
+
         } else if (err.request) {
-          setError(
-            "Tablet tidak menerima respons server. Periksa koneksi internet."
-          );
-        } else {
+          console.error("Kode error jaringan:", err.code);
+          console.error("URL API:", err.config?.url);
+          console.error("Base URL API:", err.config?.baseURL);
+
+          if (err.code === "ECONNABORTED" || err.code === "ETIMEDOUT") {
+            setError(
+              "Koneksi ke server terlalu lama. Periksa jaringan dan coba kembali."
+            );
+          } else {
+            setError(
+              "Browser tidak dapat membaca respons API. Kemungkinan ada masalah koneksi, CORS, DNS, atau HTTPS. Periksa Console dan Network untuk mengetahui penyebabnya."
+            );
+          }
+        }
+        else {
           setError(err.message || "Terjadi kesalahan saat login.");
         }
       } else {
