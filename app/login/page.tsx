@@ -16,6 +16,7 @@ import {
   LogIn,
 } from "lucide-react";
 import api from "@/lib/api";
+import axios from "axios";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -62,27 +63,46 @@ export default function LoginPage() {
       localStorage.setItem("token", token);
 
       router.replace("/dashboard");
+
     } catch (err: unknown) {
       console.error("Login gagal:", err);
 
-      const axiosError = err as {
-        response?: {
-          data?: {
+      if (axios.isAxiosError(err)) {
+        if (err.response) {
+          const status = err.response.status;
+          const data = err.response.data as {
             message?: string;
             errors?: Record<string, string[]>;
           };
-        };
-      };
 
-      const validationMessage = Object.values(
-        axiosError.response?.data?.errors ?? {}
-      )[0]?.[0];
+          console.error("Status HTTP:", status);
+          console.error("Respons API:", data);
 
-      setError(
-        validationMessage ||
-          axiosError.response?.data?.message ||
-          "Email atau password salah. Silakan periksa kembali."
-      );
+          const validationMessage = Object.values(
+            data?.errors ?? {}
+          )[0]?.[0];
+
+          if (status === 401 || status === 422) {
+            setError(
+              validationMessage ||
+              data?.message ||
+              "Email atau password tidak sesuai."
+            );
+          } else {
+            setError(
+              `Login gagal (HTTP ${status}). Silakan coba kembali.`
+            );
+          }
+        } else if (err.request) {
+          setError(
+            "Tablet tidak menerima respons server. Periksa koneksi internet."
+          );
+        } else {
+          setError(err.message || "Terjadi kesalahan saat login.");
+        }
+      } else {
+        setError("Terjadi kesalahan yang tidak diketahui.");
+      }
     } finally {
       setLoading(false);
     }
@@ -142,8 +162,8 @@ export default function LoginPage() {
 
       setError(
         validationMessage ||
-          axiosError.response?.data?.message ||
-          "Registrasi gagal. Pastikan server Laravel berjalan dan coba lagi."
+        axiosError.response?.data?.message ||
+        "Registrasi gagal. Pastikan server Laravel berjalan dan coba lagi."
       );
     } finally {
       setLoading(false);
