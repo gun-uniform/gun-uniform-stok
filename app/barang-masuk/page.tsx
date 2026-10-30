@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -435,6 +434,42 @@ export default function BarangMasukPage() {
     }));
   };
 
+  // Normalisasi nama dan detail agar perbedaan huruf besar/kecil
+  // atau spasi tidak membuat barang yang sama dianggap berbeda.
+  const normalizeText = (value: string | null | undefined) =>
+    String(value ?? "")
+      .trim()
+      .replace(/\\s+/g, " ")
+      .toLowerCase();
+
+  // Periksa apakah nama + detail/ukuran sudah dipakai barang lain.
+  // Saat edit, barang yang sedang diedit tidak dihitung sebagai duplikat.
+  const cekBarangDuplikat = () => {
+    const nama = normalizeText(form.nama_barang);
+    const ukuran = normalizeText(form.detail_ukuran);
+
+    const transaksiSekarang =
+      editingId !== null
+        ? data.find((item) => item.id === editingId)
+        : null;
+
+    const barangIdSekarang = transaksiSekarang?.barang_id ?? null;
+
+    return dataBarang.find((barang) => {
+      if (
+        barangIdSekarang !== null &&
+        barang.id === barangIdSekarang
+      ) {
+        return false;
+      }
+
+      return (
+        normalizeText(barang.nama_barang) === nama &&
+        normalizeText(barang.detail_ukuran) === ukuran
+      );
+    });
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -461,6 +496,25 @@ export default function BarangMasukPage() {
     if (!form.nama_barang.trim()) {
       setError("Nama barang wajib diisi.");
       return;
+    }
+
+    // Cegah pembuatan barang baru dengan nama dan detail/ukuran yang sama.
+    // Transaksi masuk untuk barang terdaftar tetap diperbolehkan.
+    if (barangBaru || editingId !== null) {
+      const barangDuplikat = cekBarangDuplikat();
+
+      if (barangDuplikat) {
+        setError(
+          `Barang sudah ada. ${barangDuplikat.nama_barang}${
+            barangDuplikat.detail_ukuran
+              ? ` - ${barangDuplikat.detail_ukuran}`
+              : ""
+          } sudah terdaftar dengan kode ${formatKodeBarang(
+            barangDuplikat.kode_barang
+          )}. Silakan gunakan barang yang sudah ada.`
+        );
+        return;
+      }
     }
 
     if (!form.satuan_masuk.trim()) {
