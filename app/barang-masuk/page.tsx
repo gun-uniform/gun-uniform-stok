@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -215,11 +216,9 @@ export default function BarangMasukPage() {
 
   const itemsPerPage = 10;
 
-  // Hanya admin dan gudang yang boleh mengelola transaksi.
   const canManageBarangMasuk =
     currentUserRole === "admin" || currentUserRole === "gudang";
 
-  // Baca role dari user yang tersimpan setelah halaman dimuat.
   useEffect(() => {
     try {
       const storedUser = localStorage.getItem("user");
@@ -434,16 +433,12 @@ export default function BarangMasukPage() {
     }));
   };
 
-  // Normalisasi nama dan detail agar perbedaan huruf besar/kecil
-  // atau spasi tidak membuat barang yang sama dianggap berbeda.
   const normalizeText = (value: string | null | undefined) =>
     String(value ?? "")
       .trim()
-      .replace(/\\s+/g, " ")
+      .replace(/\s+/g, " ")
       .toLowerCase();
 
-  // Periksa apakah nama + detail/ukuran sudah dipakai barang lain.
-  // Saat edit, barang yang sedang diedit tidak dihitung sebagai duplikat.
   const cekBarangDuplikat = () => {
     const nama = normalizeText(form.nama_barang);
     const ukuran = normalizeText(form.detail_ukuran);
@@ -473,7 +468,6 @@ export default function BarangMasukPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    // Pengaman tambahan untuk role pimpinan.
     if (!canManageBarangMasuk) {
       setShowModal(false);
       setError("Anda tidak memiliki izin untuk mengubah barang masuk.");
@@ -498,8 +492,6 @@ export default function BarangMasukPage() {
       return;
     }
 
-    // Cegah pembuatan barang baru dengan nama dan detail/ukuran yang sama.
-    // Transaksi masuk untuk barang terdaftar tetap diperbolehkan.
     if (barangBaru || editingId !== null) {
       const barangDuplikat = cekBarangDuplikat();
 
@@ -719,7 +711,6 @@ export default function BarangMasukPage() {
                 </div>
               </div>
 
-              {/* Tombol tambah hanya untuk admin dan gudang */}
               {canManageBarangMasuk && (
                 <button
                   type="button"
@@ -957,7 +948,6 @@ export default function BarangMasukPage() {
 
                             <td className="px-5 py-4">
                               <div className="flex items-center justify-center gap-1">
-                                {/* Semua role boleh melihat detail */}
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -970,7 +960,6 @@ export default function BarangMasukPage() {
                                   <Eye className="h-4 w-4" />
                                 </button>
 
-                                {/* Edit dan hapus hanya untuk admin/gudang */}
                                 {canManageBarangMasuk && (
                                   <>
                                     <button
@@ -1070,7 +1059,6 @@ export default function BarangMasukPage() {
         </main>
       </div>
 
-      {/* MODAL TAMBAH / EDIT */}
       {showModal && canManageBarangMasuk && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-6">
           <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
@@ -1168,7 +1156,7 @@ export default function BarangMasukPage() {
                     name="nama_barang"
                     value={form.nama_barang}
                     onChange={handleChange}
-                    disabled={!!barangDitemukan}
+                    disabled={!!barangDitemukan && editingId === null}
                     placeholder="Masukkan nama barang"
                     required
                     className={inputClass}
@@ -1237,7 +1225,7 @@ export default function BarangMasukPage() {
                     name="detail_ukuran"
                     value={form.detail_ukuran}
                     onChange={handleChange}
-                    disabled={!!barangDitemukan}
+                    disabled={!!barangDitemukan && editingId === null}
                     placeholder="Contoh: Ukuran L / 10 Meter"
                     className={inputClass}
                   />
@@ -1353,7 +1341,6 @@ export default function BarangMasukPage() {
         </div>
       )}
 
-      {/* MODAL DETAIL: bisa dibuka oleh semua role */}
       {showDetail && selectedData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-6">
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
