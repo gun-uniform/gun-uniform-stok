@@ -195,7 +195,8 @@ export default function BarangMasukPage() {
   const [data, setData] = useState<BarangMasuk[]>([]);
   const [dataBarang, setDataBarang] = useState<Barang[]>([]);
 
-  const [currentUserRole, setCurrentUserRole] = useState<UserRole | null>(null);
+  const [currentUserRole, setCurrentUserRole] =
+    useState<UserRole | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -204,11 +205,16 @@ export default function BarangMasukPage() {
 
   const [showModal, setShowModal] = useState(false);
   const [showDetail, setShowDetail] = useState(false);
+
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [selectedData, setSelectedData] = useState<BarangMasuk | null>(null);
+  const [selectedData, setSelectedData] =
+    useState<BarangMasuk | null>(null);
 
   const [form, setForm] = useState<FormData>(createInitialForm());
-  const [barangDitemukan, setBarangDitemukan] = useState<Barang | null>(null);
+
+  const [barangDitemukan, setBarangDitemukan] =
+    useState<Barang | null>(null);
+
   const [barangBaru, setBarangBaru] = useState(false);
 
   const [error, setError] = useState("");
@@ -218,6 +224,10 @@ export default function BarangMasukPage() {
 
   const canManageBarangMasuk =
     currentUserRole === "admin" || currentUserRole === "gudang";
+
+  // ==========================================
+  // ROLE PENGGUNA
+  // ==========================================
 
   useEffect(() => {
     try {
@@ -231,7 +241,11 @@ export default function BarangMasukPage() {
       const user = JSON.parse(storedUser);
       const role = String(user.role ?? "").trim().toLowerCase();
 
-      if (role === "admin" || role === "pimpinan" || role === "gudang") {
+      if (
+        role === "admin" ||
+        role === "pimpinan" ||
+        role === "gudang"
+      ) {
         setCurrentUserRole(role);
       } else {
         setCurrentUserRole(null);
@@ -241,6 +255,10 @@ export default function BarangMasukPage() {
       setCurrentUserRole(null);
     }
   }, []);
+
+  // ==========================================
+  // AMBIL DATA
+  // ==========================================
 
   const fetchData = useCallback(async () => {
     const [masukResponse, barangResponse] = await Promise.all([
@@ -272,7 +290,10 @@ export default function BarangMasukPage() {
       } catch (err: unknown) {
         if (!cancelled) {
           setError(
-            getErrorMessage(err, "Gagal mengambil data barang masuk.")
+            getErrorMessage(
+              err,
+              "Gagal mengambil data barang masuk."
+            )
           );
         }
       } finally {
@@ -287,6 +308,10 @@ export default function BarangMasukPage() {
     };
   }, []);
 
+  // ==========================================
+  // RESET FORM
+  // ==========================================
+
   const resetForm = () => {
     setForm(createInitialForm());
     setEditingId(null);
@@ -295,11 +320,18 @@ export default function BarangMasukPage() {
     setError("");
   };
 
+  // ==========================================
+  // GENERATE KODE BARANG
+  // ==========================================
+
   const getNextKodeBarang = () => {
     let maxNumber = 0;
 
     dataBarang.forEach((barang) => {
-      const kode = String(barang.kode_barang ?? "").trim().toUpperCase();
+      const kode = String(barang.kode_barang ?? "")
+        .trim()
+        .toUpperCase();
+
       const match = kode.match(/^(?:BRG-?)?(\d+)$/);
 
       if (match) {
@@ -309,6 +341,10 @@ export default function BarangMasukPage() {
 
     return `BRG-${String(maxNumber + 1).padStart(4, "0")}`;
   };
+
+  // ==========================================
+  // FORMAT KONVERSI
+  // ==========================================
 
   const formatKonversi = (
     barang: Pick<
@@ -334,6 +370,10 @@ export default function BarangMasukPage() {
     return `Satuan stok: ${keluar || masuk || "-"}`;
   };
 
+  // ==========================================
+  // TAMBAH BARANG MASUK
+  // ==========================================
+
   const handleAdd = () => {
     if (!canManageBarangMasuk) return;
 
@@ -348,6 +388,10 @@ export default function BarangMasukPage() {
     setSuccess("");
     setShowModal(true);
   };
+
+  // ==========================================
+  // CEK KODE BARANG
+  // ==========================================
 
   const handleKodeBarangChange = (value: string) => {
     if (!canManageBarangMasuk) return;
@@ -379,7 +423,8 @@ export default function BarangMasukPage() {
 
     const barang = dataBarang.find(
       (item) =>
-        item.kode_barang?.trim().toLowerCase() === kode.toLowerCase() ||
+        item.kode_barang?.trim().toLowerCase() ===
+          kode.toLowerCase() ||
         formatKodeBarang(item.kode_barang).toLowerCase() ===
           formatKodeBarang(kode).toLowerCase()
     );
@@ -418,6 +463,10 @@ export default function BarangMasukPage() {
     }
   };
 
+  // ==========================================
+  // HANDLE PERUBAHAN FORM
+  // ==========================================
+
   const handleChange = (
     event: ChangeEvent<
       HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
@@ -433,114 +482,168 @@ export default function BarangMasukPage() {
     }));
   };
 
-  const normalizeText = (value: string | null | undefined) =>
+  // ==========================================
+  // NORMALISASI TEKS
+  // ==========================================
+
+  const normalizeText = (
+    value: string | null | undefined
+  ) =>
     String(value ?? "")
       .trim()
       .replace(/\s+/g, " ")
       .toLowerCase();
 
+  // ==========================================
+  // CEK DUPLIKAT BARANG
+  //
+  // Duplikat hanya jika:
+  // 1. Nama barang sama
+  // 2. Detail / ukuran sama
+  // 3. Supplier sama
+  //
+  // Data diperiksa dari transaksi barang masuk.
+  // ==========================================
+
   const cekBarangDuplikat = () => {
     const nama = normalizeText(form.nama_barang);
     const ukuran = normalizeText(form.detail_ukuran);
+    const supplier = normalizeText(form.supplier);
 
-    const transaksiSekarang =
-      editingId !== null
-        ? data.find((item) => item.id === editingId)
-        : null;
-
-    const barangIdSekarang = transaksiSekarang?.barang_id ?? null;
-
-    return dataBarang.find((barang) => {
-      if (
-        barangIdSekarang !== null &&
-        barang.id === barangIdSekarang
-      ) {
+    return data.find((item) => {
+      // Abaikan transaksi yang sedang diedit
+      if (editingId !== null && item.id === editingId) {
         return false;
       }
 
-      return (
-        normalizeText(barang.nama_barang) === nama &&
-        normalizeText(barang.detail_ukuran) === ukuran
-      );
+      const namaSama =
+        normalizeText(item.nama_barang) === nama;
+
+      const ukuranSama =
+        normalizeText(item.detail_ukuran) === ukuran;
+
+      const supplierSama =
+        normalizeText(item.supplier) === supplier;
+
+      return namaSama && ukuranSama && supplierSama;
     });
   };
 
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
+  // ==========================================
+  // SIMPAN / UPDATE BARANG MASUK
+  // ==========================================
+
+  const handleSubmit = async (
+    event: FormEvent<HTMLFormElement>
+  ) => {
     event.preventDefault();
 
     if (!canManageBarangMasuk) {
       setShowModal(false);
-      setError("Anda tidak memiliki izin untuk mengubah barang masuk.");
+      setError(
+        "Anda tidak memiliki izin untuk mengubah barang masuk."
+      );
       return;
     }
 
     setError("");
     setSuccess("");
 
+    // Validasi tanggal
     if (!form.tanggal) {
       setError("Tanggal wajib diisi.");
       return;
     }
 
+    // Validasi kode barang
     if (!form.kode_barang.trim()) {
       setError("Kode barang wajib diisi.");
       return;
     }
 
+    // Validasi nama barang
     if (!form.nama_barang.trim()) {
       setError("Nama barang wajib diisi.");
       return;
     }
 
-    if (barangBaru || editingId !== null) {
-      const barangDuplikat = cekBarangDuplikat();
+    // ==========================================
+    // VALIDASI DUPLIKAT
+    // ==========================================
 
-      if (barangDuplikat) {
-        setError(
-          `Barang sudah ada. ${barangDuplikat.nama_barang}${
-            barangDuplikat.detail_ukuran
-              ? ` - ${barangDuplikat.detail_ukuran}`
-              : ""
-          } sudah terdaftar dengan kode ${formatKodeBarang(
-            barangDuplikat.kode_barang
-          )}. Silakan gunakan barang yang sudah ada.`
-        );
-        return;
-      }
+    const barangDuplikat = cekBarangDuplikat();
+
+    if (barangDuplikat) {
+      setError(
+        `Transaksi barang sudah ada. ${
+          barangDuplikat.nama_barang
+        }${
+          barangDuplikat.detail_ukuran
+            ? ` - ${barangDuplikat.detail_ukuran}`
+            : ""
+        } dengan supplier "${
+          barangDuplikat.supplier || "-"
+        }" sudah terdaftar pada transaksi ${
+          barangDuplikat.nomor_transaksi || "-"
+        }. Silakan periksa kembali data barang dan supplier.`
+      );
+
+      return;
     }
 
+    // Validasi satuan masuk
     if (!form.satuan_masuk.trim()) {
       setError("Satuan masuk wajib diisi.");
       return;
     }
 
+    // Validasi satuan stok
     if (!form.satuan_keluar.trim()) {
       setError("Satuan stok wajib diisi.");
       return;
     }
 
-    const satuanMasuk = form.satuan_masuk.trim().toUpperCase();
-    const satuanKeluar = form.satuan_keluar.trim().toUpperCase();
+    const satuanMasuk = form.satuan_masuk
+      .trim()
+      .toUpperCase();
+
+    const satuanKeluar = form.satuan_keluar
+      .trim()
+      .toUpperCase();
+
     const isi = Number(form.isi_per_satuan);
     const jumlah = Number(form.jumlah);
     const stokMinimum = Number(form.stok_minimum || 0);
 
-    if (satuanMasuk !== satuanKeluar && (!isi || isi <= 0)) {
+    // Validasi konversi
+    if (
+      satuanMasuk !== satuanKeluar &&
+      (!isi || isi <= 0)
+    ) {
       setError(
         "Isi per satuan wajib diisi jika satuan masuk berbeda dari satuan stok."
       );
       return;
     }
 
+    // Validasi jumlah
     if (!Number.isFinite(jumlah) || jumlah <= 0) {
       setError("Jumlah barang harus lebih dari 0.");
       return;
     }
 
-    if (!Number.isFinite(stokMinimum) || stokMinimum < 0) {
+    // Validasi stok minimum
+    if (
+      !Number.isFinite(stokMinimum) ||
+      stokMinimum < 0
+    ) {
       setError("Batas minimum stok tidak boleh negatif.");
       return;
     }
+
+    // ==========================================
+    // PAYLOAD API
+    // ==========================================
 
     const payload = {
       tanggal: form.tanggal,
@@ -548,7 +651,8 @@ export default function BarangMasukPage() {
       nama_barang: form.nama_barang.trim(),
       detail_ukuran: form.detail_ukuran.trim() || null,
       satuan_masuk: form.satuan_masuk.trim(),
-      isi_per_satuan: satuanMasuk === satuanKeluar ? null : isi,
+      isi_per_satuan:
+        satuanMasuk === satuanKeluar ? null : isi,
       satuan_keluar: form.satuan_keluar.trim(),
       stok_minimum: stokMinimum,
       jumlah,
@@ -560,10 +664,15 @@ export default function BarangMasukPage() {
       setSaving(true);
 
       if (editingId !== null) {
-        await api.put(`/barang-masuk/${editingId}`, payload);
+        await api.put(
+          `/barang-masuk/${editingId}`,
+          payload
+        );
+
         setSuccess("Barang masuk berhasil diperbarui.");
       } else {
         await api.post("/barang-masuk", payload);
+
         setSuccess("Barang masuk berhasil ditambahkan.");
       }
 
@@ -582,17 +691,26 @@ export default function BarangMasukPage() {
       }
     } catch (err: unknown) {
       setError(
-        getErrorMessage(err, "Gagal menyimpan data barang masuk.")
+        getErrorMessage(
+          err,
+          "Gagal menyimpan data barang masuk."
+        )
       );
     } finally {
       setSaving(false);
     }
   };
 
+  // ==========================================
+  // EDIT BARANG MASUK
+  // ==========================================
+
   const handleEdit = (item: BarangMasuk) => {
     if (!canManageBarangMasuk) return;
 
-    const barang = dataBarang.find((entry) => entry.id === item.barang_id);
+    const barang = dataBarang.find(
+      (entry) => entry.id === item.barang_id
+    );
 
     setEditingId(item.id);
     setBarangDitemukan(barang || null);
@@ -611,7 +729,9 @@ export default function BarangMasukPage() {
             ? String(item.isi_per_satuan)
             : "",
       satuan_keluar:
-        barang?.satuan_keluar || item.satuan_keluar || "PCS",
+        barang?.satuan_keluar ||
+        item.satuan_keluar ||
+        "PCS",
       stok_minimum: String(barang?.stok_minimum ?? 0),
       jumlah: String(item.jumlah ?? ""),
       supplier: item.supplier || "",
@@ -623,9 +743,15 @@ export default function BarangMasukPage() {
     setShowModal(true);
   };
 
+  // ==========================================
+  // HAPUS BARANG MASUK
+  // ==========================================
+
   const handleDelete = async (item: BarangMasuk) => {
     if (!canManageBarangMasuk) {
-      setError("Anda tidak memiliki izin untuk menghapus barang masuk.");
+      setError(
+        "Anda tidak memiliki izin untuk menghapus barang masuk."
+      );
       return;
     }
 
@@ -640,12 +766,22 @@ export default function BarangMasukPage() {
 
     try {
       await api.delete(`/barang-masuk/${item.id}`);
-      setSuccess("Transaksi barang masuk berhasil dihapus.");
+
+      setSuccess(
+        "Transaksi barang masuk berhasil dihapus."
+      );
+
       await fetchData();
     } catch (err: unknown) {
-      setError(getErrorMessage(err, "Gagal menghapus transaksi."));
+      setError(
+        getErrorMessage(err, "Gagal menghapus transaksi.")
+      );
     }
   };
+
+  // ==========================================
+  // PENCARIAN
+  // ==========================================
 
   const filteredData = useMemo(() => {
     const keyword = search.toLowerCase().trim();
@@ -659,33 +795,56 @@ export default function BarangMasukPage() {
         item.nama_barang,
         item.supplier,
         item.keterangan,
-      ].some((value) => String(value ?? "").toLowerCase().includes(keyword))
+      ].some((value) =>
+        String(value ?? "").toLowerCase().includes(keyword)
+      )
     );
   }, [data, search]);
+
+  // ==========================================
+  // RINGKASAN DATA
+  // ==========================================
 
   const totalTransaksi = data.length;
 
   const totalBarangMasuk = data.reduce(
     (total, item) =>
-      total + Number(item.jumlah_dasar ?? item.jumlah ?? 0),
+      total +
+      Number(item.jumlah_dasar ?? item.jumlah ?? 0),
     0
   );
 
   const supplierCount = new Set(
-    data.map((item) => item.supplier?.trim()).filter(Boolean)
+    data
+      .map((item) => normalizeText(item.supplier))
+      .filter(Boolean)
   ).size;
+
+  // ==========================================
+  // PAGINATION
+  // ==========================================
 
   const totalPages = Math.max(
     1,
     Math.ceil(filteredData.length / itemsPerPage)
   );
 
-  const safeCurrentPage = Math.min(currentPage, totalPages);
-  const startIndex = (safeCurrentPage - 1) * itemsPerPage;
+  const safeCurrentPage = Math.min(
+    currentPage,
+    totalPages
+  );
+
+  const startIndex =
+    (safeCurrentPage - 1) * itemsPerPage;
+
   const paginatedData = filteredData.slice(
     startIndex,
     startIndex + itemsPerPage
   );
+
+  // ==========================================
+  // TAMPILAN
+  // ==========================================
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -696,15 +855,20 @@ export default function BarangMasukPage() {
 
         <main className="pt-20">
           <div className="p-8">
+
+            {/* HEADER */}
+
             <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="rounded-xl bg-blue-100 p-3">
                   <PackagePlus className="h-7 w-7 text-blue-600" />
                 </div>
+
                 <div>
                   <h1 className="text-2xl font-bold text-slate-800">
                     Barang Masuk
                   </h1>
+
                   <p className="text-sm text-slate-500">
                     Kelola transaksi barang yang masuk ke dalam stok.
                   </p>
@@ -723,10 +887,14 @@ export default function BarangMasukPage() {
               )}
             </div>
 
+            {/* PESAN SUKSES */}
+
             {success && (
               <div className="mb-5 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-5 py-4 text-sm text-green-700">
                 <CheckCircle2 className="h-5 w-5 shrink-0" />
+
                 <span>{success}</span>
+
                 <button
                   type="button"
                   className="ml-auto"
@@ -738,10 +906,14 @@ export default function BarangMasukPage() {
               </div>
             )}
 
+            {/* PESAN ERROR */}
+
             {error && !showModal && (
               <div className="mb-5 flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
                 <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+
                 <span>{error}</span>
+
                 <button
                   type="button"
                   className="ml-auto"
@@ -753,36 +925,54 @@ export default function BarangMasukPage() {
               </div>
             )}
 
+            {/* RINGKASAN */}
+
             <div className="mb-8 grid grid-cols-1 gap-5 md:grid-cols-3">
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm text-slate-500">Total Transaksi</p>
+                <p className="text-sm text-slate-500">
+                  Total Transaksi
+                </p>
+
                 <h2 className="mt-2 text-3xl font-bold text-slate-800">
                   {formatNumber(totalTransaksi)}
                 </h2>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm text-slate-500">Total Barang Masuk</p>
+                <p className="text-sm text-slate-500">
+                  Total Barang Masuk
+                </p>
+
                 <h2 className="mt-2 text-3xl font-bold text-blue-600">
                   {formatNumber(totalBarangMasuk)}
                 </h2>
+
                 <p className="mt-1 text-xs text-slate-400">
                   Dalam satuan stok
                 </p>
               </div>
 
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-sm text-slate-500">Supplier</p>
+                <p className="text-sm text-slate-500">
+                  Supplier
+                </p>
+
                 <h2 className="mt-2 text-3xl font-bold text-slate-800">
                   {formatNumber(supplierCount)}
                 </h2>
               </div>
             </div>
 
+            {/* TABEL BARANG MASUK */}
+
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+
+              {/* SEARCH DAN RELOAD */}
+
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-5">
                 <div className="relative w-full max-w-md">
                   <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+
                   <input
                     type="text"
                     placeholder="Cari kode, nama barang, transaksi..."
@@ -805,7 +995,10 @@ export default function BarangMasukPage() {
                       await fetchData();
                     } catch (err: unknown) {
                       setError(
-                        getErrorMessage(err, "Gagal memuat ulang data.")
+                        getErrorMessage(
+                          err,
+                          "Gagal memuat ulang data."
+                        )
                       );
                     } finally {
                       setLoading(false);
@@ -815,11 +1008,16 @@ export default function BarangMasukPage() {
                   className="flex items-center gap-2 rounded-xl border border-slate-300 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                 >
                   <RefreshCw
-                    className={`h-4 w-4 ${loading ? "animate-spin" : ""}`}
+                    className={`h-4 w-4 ${
+                      loading ? "animate-spin" : ""
+                    }`}
                   />
+
                   Muat Ulang
                 </button>
               </div>
+
+              {/* ISI TABEL */}
 
               <div className="overflow-x-auto">
                 {loading ? (
@@ -829,11 +1027,13 @@ export default function BarangMasukPage() {
                 ) : filteredData.length === 0 ? (
                   <div className="py-20 text-center">
                     <PackagePlus className="mx-auto mb-4 h-12 w-12 text-slate-300" />
+
                     <h3 className="text-lg font-semibold text-slate-700">
                       {search
                         ? "Data tidak ditemukan"
                         : "Belum ada transaksi barang masuk"}
                     </h3>
+
                     <p className="mt-1 text-sm text-slate-500">
                       {search
                         ? "Coba gunakan kata kunci pencarian lain."
@@ -861,7 +1061,9 @@ export default function BarangMasukPage() {
                           <th
                             key={heading}
                             className={`px-5 py-4 ${
-                              heading === "Aksi" ? "text-center" : ""
+                              heading === "Aksi"
+                                ? "text-center"
+                                : ""
                             }`}
                           >
                             {heading}
@@ -886,7 +1088,8 @@ export default function BarangMasukPage() {
                             ? {
                                 satuan_masuk: item.satuan,
                                 satuan_keluar: item.satuan_keluar,
-                                isi_per_satuan: item.isi_per_satuan ?? null,
+                                isi_per_satuan:
+                                  item.isi_per_satuan ?? null,
                               }
                             : null;
 
@@ -948,6 +1151,7 @@ export default function BarangMasukPage() {
 
                             <td className="px-5 py-4">
                               <div className="flex items-center justify-center gap-1">
+
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -973,7 +1177,9 @@ export default function BarangMasukPage() {
 
                                     <button
                                       type="button"
-                                      onClick={() => void handleDelete(item)}
+                                      onClick={() =>
+                                        void handleDelete(item)
+                                      }
                                       title="Hapus"
                                       className="rounded-lg p-2 text-red-500 hover:bg-red-50 hover:text-red-700"
                                     >
@@ -990,6 +1196,8 @@ export default function BarangMasukPage() {
                   </table>
                 )}
               </div>
+
+              {/* PAGINATION */}
 
               {!loading && filteredData.length > 0 && (
                 <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 px-5 py-4">
@@ -1013,7 +1221,9 @@ export default function BarangMasukPage() {
                     <button
                       type="button"
                       onClick={() =>
-                        setCurrentPage((page) => Math.max(1, page - 1))
+                        setCurrentPage((page) =>
+                          Math.max(1, page - 1)
+                        )
                       }
                       disabled={safeCurrentPage === 1}
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
@@ -1046,7 +1256,9 @@ export default function BarangMasukPage() {
                           Math.min(totalPages, page + 1)
                         )
                       }
-                      disabled={safeCurrentPage === totalPages}
+                      disabled={
+                        safeCurrentPage === totalPages
+                      }
                       className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Berikutnya
@@ -1059,9 +1271,16 @@ export default function BarangMasukPage() {
         </main>
       </div>
 
+      {/* ======================================
+          MODAL TAMBAH / EDIT BARANG MASUK
+      ====================================== */}
+
       {showModal && canManageBarangMasuk && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-6">
           <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+
+            {/* HEADER MODAL */}
+
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-6 py-5">
               <div>
                 <h2 className="text-xl font-bold text-slate-800">
@@ -1069,6 +1288,7 @@ export default function BarangMasukPage() {
                     ? "Edit Barang Masuk"
                     : "Tambah Barang Masuk"}
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
                   Masukkan informasi transaksi barang masuk.
                 </p>
@@ -1087,14 +1307,21 @@ export default function BarangMasukPage() {
               </button>
             </div>
 
+            {/* FORM */}
+
             <form onSubmit={handleSubmit}>
               <div className="space-y-5 p-6">
+
+                {/* ERROR VALIDASI */}
+
                 {error && (
                   <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                     <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
                     <span>{error}</span>
                   </div>
                 )}
+
+                {/* TANGGAL DAN NOMOR TRANSAKSI */}
 
                 <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <FormField label="Tanggal" required>
@@ -1112,8 +1339,9 @@ export default function BarangMasukPage() {
                     <input
                       value={
                         editingId !== null
-                          ? data.find((item) => item.id === editingId)
-                              ?.nomor_transaksi || "-"
+                          ? data.find(
+                              (item) => item.id === editingId
+                            )?.nomor_transaksi || "-"
                           : "Otomatis dibuat oleh sistem"
                       }
                       disabled
@@ -1121,6 +1349,8 @@ export default function BarangMasukPage() {
                     />
                   </FormField>
                 </div>
+
+                {/* KODE BARANG */}
 
                 <FormField label="Kode Barang" required>
                   <input
@@ -1137,31 +1367,35 @@ export default function BarangMasukPage() {
                   {barangDitemukan && (
                     <p className="mt-2 flex items-center gap-2 text-sm text-green-700">
                       <CheckCircle2 className="h-4 w-4" />
-                      Barang sudah terdaftar. Data barang digunakan secara
-                      otomatis.
+                      Barang sudah terdaftar. Data barang digunakan secara otomatis.
                     </p>
                   )}
 
                   {barangBaru && form.kode_barang.trim() && (
                     <p className="mt-2 flex items-center gap-2 text-sm text-blue-700">
                       <PackagePlus className="h-4 w-4" />
-                      Kode belum terdaftar. Data barang baru akan dibuat jika
-                      didukung backend.
+                      Kode belum terdaftar. Data barang baru akan dibuat jika didukung backend.
                     </p>
                   )}
                 </FormField>
+
+                {/* NAMA BARANG */}
 
                 <FormField label="Nama Barang" required>
                   <input
                     name="nama_barang"
                     value={form.nama_barang}
                     onChange={handleChange}
-                    disabled={!!barangDitemukan && editingId === null}
+                    disabled={
+                      !!barangDitemukan && editingId === null
+                    }
                     placeholder="Masukkan nama barang"
                     required
                     className={inputClass}
                   />
                 </FormField>
+
+                {/* SATUAN MASUK DAN ISI PER SATUAN */}
 
                 <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <FormField label="Satuan Masuk" required>
@@ -1184,18 +1418,22 @@ export default function BarangMasukPage() {
                       onChange={handleChange}
                       disabled={
                         !!barangDitemukan ||
-                        form.satuan_masuk.trim().toUpperCase() === "PCS"
+                        form.satuan_masuk.trim().toUpperCase() ===
+                          "PCS"
                       }
                       min="1"
                       step="1"
                       placeholder="Contoh: 25"
                       className={inputClass}
                     />
+
                     <p className="mt-1 text-xs text-slate-400">
                       Contoh: 1 PACK = 25 PCS.
                     </p>
                   </FormField>
                 </div>
+
+                {/* SATUAN STOK */}
 
                 <FormField label="Satuan Stok" required>
                   <input
@@ -1209,27 +1447,36 @@ export default function BarangMasukPage() {
                   />
                 </FormField>
 
+                {/* INFORMASI KONVERSI */}
+
                 {barangDitemukan && (
                   <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
                     <p className="text-xs font-medium uppercase tracking-wide text-blue-500">
                       Konversi Stok
                     </p>
+
                     <p className="mt-1 text-sm font-semibold text-blue-700">
                       {formatKonversi(barangDitemukan)}
                     </p>
                   </div>
                 )}
 
+                {/* DETAIL UKURAN */}
+
                 <FormField label="Detail / Ukuran">
                   <input
                     name="detail_ukuran"
                     value={form.detail_ukuran}
                     onChange={handleChange}
-                    disabled={!!barangDitemukan && editingId === null}
+                    disabled={
+                      !!barangDitemukan && editingId === null
+                    }
                     placeholder="Contoh: Ukuran L / 10 Meter"
                     className={inputClass}
                   />
                 </FormField>
+
+                {/* STOK MINIMUM */}
 
                 {barangBaru && (
                   <FormField label="Batas Minimum Stok">
@@ -1242,11 +1489,14 @@ export default function BarangMasukPage() {
                       step="1"
                       className={inputClass}
                     />
+
                     <p className="mt-1 text-xs text-slate-400">
                       Digunakan untuk menentukan status stok menipis.
                     </p>
                   </FormField>
                 )}
+
+                {/* JUMLAH BARANG */}
 
                 <FormField label="Jumlah Barang Masuk" required>
                   <input
@@ -1267,13 +1517,16 @@ export default function BarangMasukPage() {
                     <p className="mt-2 text-xs text-slate-500">
                       Jumlah masuk:{" "}
                       <strong>
-                        {formatNumber(form.jumlah)} {form.satuan_masuk}
+                        {formatNumber(form.jumlah)}{" "}
+                        {form.satuan_masuk}
                       </strong>
+
                       {form.satuan_masuk.trim().toUpperCase() !==
                         form.satuan_keluar.trim().toUpperCase() &&
                         Number(form.isi_per_satuan) > 0 && (
                           <>
                             {" → "}
+
                             <strong className="text-blue-600">
                               {formatNumber(
                                 Number(form.jumlah) *
@@ -1287,6 +1540,8 @@ export default function BarangMasukPage() {
                   )}
                 </FormField>
 
+                {/* SUPPLIER */}
+
                 <FormField label="Supplier">
                   <input
                     name="supplier"
@@ -1295,7 +1550,14 @@ export default function BarangMasukPage() {
                     placeholder="Nama supplier"
                     className={inputClass}
                   />
+
+                  <p className="mt-1 text-xs text-slate-400">
+                    Nama dan ukuran barang yang sama boleh digunakan
+                    jika supplier berbeda.
+                  </p>
                 </FormField>
+
+                {/* KETERANGAN */}
 
                 <FormField label="Keterangan">
                   <textarea
@@ -1308,6 +1570,8 @@ export default function BarangMasukPage() {
                   />
                 </FormField>
               </div>
+
+              {/* FOOTER MODAL */}
 
               <div className="flex justify-end gap-3 border-t border-slate-200 px-6 py-5">
                 <button
@@ -1329,6 +1593,7 @@ export default function BarangMasukPage() {
                   {saving && (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   )}
+
                   {saving
                     ? "Menyimpan..."
                     : editingId !== null
@@ -1341,14 +1606,22 @@ export default function BarangMasukPage() {
         </div>
       )}
 
+      {/* ======================================
+          MODAL DETAIL BARANG MASUK
+      ====================================== */}
+
       {showDetail && selectedData && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 sm:p-6">
           <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+
+            {/* HEADER DETAIL */}
+
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
               <div>
                 <h2 className="text-xl font-bold text-slate-800">
                   Detail Barang Masuk
                 </h2>
+
                 <p className="mt-1 text-sm text-slate-500">
                   {selectedData.nomor_transaksi || "-"}
                 </p>
@@ -1364,39 +1637,55 @@ export default function BarangMasukPage() {
               </button>
             </div>
 
+            {/* ISI DETAIL */}
+
             <div className="grid grid-cols-1 gap-4 p-6 sm:grid-cols-2">
               <DetailItem
                 label="Tanggal"
-                value={selectedData.tanggal?.slice(0, 10) || "-"}
+                value={
+                  selectedData.tanggal?.slice(0, 10) || "-"
+                }
               />
+
               <DetailItem
                 label="Nomor Transaksi"
                 value={selectedData.nomor_transaksi || "-"}
               />
+
               <DetailItem
                 label="Kode Barang"
-                value={formatKodeBarang(selectedData.kode_barang)}
+                value={formatKodeBarang(
+                  selectedData.kode_barang
+                )}
               />
+
               <DetailItem
                 label="Nama Barang"
                 value={selectedData.nama_barang || "-"}
               />
+
               <DetailItem
                 label="Detail / Ukuran"
                 value={selectedData.detail_ukuran || "-"}
               />
+
               <DetailItem
                 label="Jumlah Masuk"
-                value={`${formatNumber(selectedData.jumlah)} ${
-                  selectedData.satuan || ""
-                }`}
+                value={`${formatNumber(
+                  selectedData.jumlah
+                )} ${selectedData.satuan || ""}`}
               />
+
               <DetailItem
                 label="Jumlah dalam Stok"
                 value={`${formatNumber(
-                  selectedData.jumlah_dasar ?? selectedData.jumlah
-                )} ${selectedData.satuan_keluar || "PCS"}`}
+                  selectedData.jumlah_dasar ??
+                    selectedData.jumlah
+                )} ${
+                  selectedData.satuan_keluar || "PCS"
+                }`}
               />
+
               <DetailItem
                 label="Konversi"
                 value={
@@ -1408,15 +1697,19 @@ export default function BarangMasukPage() {
                     : selectedData.satuan || "-"
                 }
               />
+
               <DetailItem
                 label="Supplier"
                 value={selectedData.supplier || "-"}
               />
+
               <DetailItem
                 label="Keterangan"
                 value={selectedData.keterangan || "-"}
               />
             </div>
+
+            {/* FOOTER DETAIL */}
 
             <div className="flex justify-end border-t border-slate-200 px-6 py-5">
               <button
